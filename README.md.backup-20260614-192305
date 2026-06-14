@@ -16,7 +16,7 @@ The older Futu/OpenD scanner is still in `afterhours_scanner.py`, but this READM
 
 ## What It Checks
 
-The scanner maps the requirement document into four independent selectable traits:
+The scanner maps the V3 requirement document into three independent selectable traits:
 
 - `+10% high-turnover mover`
   - Close-to-close gain is at least `10%`.
@@ -35,15 +35,6 @@ The scanner maps the requirement document into four independent selectable trait
   - Recent high/low range is within `5%` for at least `3` trading days.
   - Daily turnover is at least `20,000,000` during that period.
   - Close price is at least `$3`.
-  - Market cap is at least `500,000,000`.
-
-- `20D high-turnover box breakout`
-  - The previous `20` trading days form a price box.
-  - Box width is calculated as `box_high / box_low - 1`.
-  - Box width must be no more than `15%`.
-  - The latest close must break above the prior box high.
-  - Latest turnover must be at least `1.5` times the prior 5-day average turnover.
-  - Latest turnover must be at least `30,000,000`.
   - Market cap is at least `500,000,000`.
 
 Each trait is independent. A stock can match one trait, multiple traits, or none. Use `Any Selected` to show stocks matching at least one selected trait, or `All Selected` to require every selected trait.

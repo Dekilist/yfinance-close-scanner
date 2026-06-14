@@ -21,7 +21,6 @@ except ImportError:
 TRAIT_MOVER = "mover"
 TRAIT_EMA_BULLISH = "ema_bullish"
 TRAIT_TIGHT_RANGE = "tight_range"
-TRAIT_BOX_BREAKOUT = "box_breakout"
 MATCH_ANY = "Any Selected"
 MATCH_ALL = "All Selected"
 LANG_EN = "en"
@@ -32,13 +31,11 @@ TRAIT_LABELS_BY_LANG = {
         TRAIT_MOVER: "+10% high-turnover mover",
         TRAIT_EMA_BULLISH: "EMA5/10/20 bullish for 5D+",
         TRAIT_TIGHT_RANGE: "3D+ tight 5% price range",
-        TRAIT_BOX_BREAKOUT: "20D high-turnover box breakout",
     },
     LANG_ZH: {
         TRAIT_MOVER: "当日放量大涨10%+",
         TRAIT_EMA_BULLISH: "EMA5/10/20连续多头",
         TRAIT_TIGHT_RANGE: "连续窄幅波动",
-        TRAIT_BOX_BREAKOUT: "放量突破箱体",
     },
 }
 TRAIT_LABELS = TRAIT_LABELS_BY_LANG[LANG_EN]
@@ -54,8 +51,6 @@ DISPLAY_COLUMNS = [
     "mover_ratio",
     "turnover",
     "market_cap",
-    "box_width_pct",
-    "breakout_side",
     "ema5",
     "ema10",
     "ema20",
@@ -76,8 +71,6 @@ COLUMN_LABELS_BY_LANG = {
         "mover_ratio": "Mover Ratio",
         "turnover": "Turnover",
         "market_cap": "Market Cap",
-        "box_width_pct": "Box Width %",
-        "breakout_side": "Breakout",
         "ema5": "EMA5",
         "ema10": "EMA10",
         "ema20": "EMA20",
@@ -96,8 +89,6 @@ COLUMN_LABELS_BY_LANG = {
         "mover_ratio": "量比",
         "turnover": "成交额",
         "market_cap": "市值",
-        "box_width_pct": "箱体宽度%",
-        "breakout_side": "突破方向",
         "ema5": "EMA5",
         "ema10": "EMA10",
         "ema20": "EMA20",
@@ -157,10 +148,6 @@ UI_TEXT = {
         "field_ema_bullish_days": "EMA Bullish Days",
         "field_range_days": "Range Days",
         "field_range_width_pct": "Range Width %",
-        "field_box_days": "Box Days",
-        "field_box_width_pct": "Box Width %",
-        "field_breakout_turnover": "Breakout Turnover",
-        "field_breakout_multiple": "Breakout Multiple",
         "allow_missing_market_cap": "Allow missing market cap",
         "button_scan": "Run Scan",
         "button_stop": "Stop",
@@ -211,10 +198,6 @@ UI_TEXT = {
         "field_ema_bullish_days": "EMA多头天数",
         "field_range_days": "窄幅天数",
         "field_range_width_pct": "波动范围%",
-        "field_box_days": "箱体天数",
-        "field_box_width_pct": "箱体宽度%",
-        "field_breakout_turnover": "突破成交额",
-        "field_breakout_multiple": "突破放量倍数",
         "allow_missing_market_cap": "允许缺失市值",
         "button_scan": "开始扫描",
         "button_stop": "停止",
@@ -296,12 +279,6 @@ def choice_from_label(lang: str, group: str, label: str) -> str:
     return label
 
 
-def localized_breakout_side(lang: str, value: str) -> str:
-    if value == "Up":
-        return "向上" if lang == LANG_ZH else "Up"
-    return value
-
-
 @dataclass
 class ScannerConfig:
     source_mode: str
@@ -321,10 +298,6 @@ class ScannerConfig:
     ema_bullish_days: int
     range_days: int
     range_width_pct: float
-    box_days: int
-    box_width_pct: float
-    min_breakout_turnover: float
-    breakout_turnover_multiple: float
 
 
 def to_float(value, default: float = 0.0) -> float:
@@ -561,8 +534,6 @@ def base_row(symbol: str, daily, market_cap: float) -> dict:
         "mover_ratio": mover_ratio,
         "turnover": turnover,
         "market_cap": market_cap,
-        "box_width_pct": "",
-        "breakout_side": "",
         "ema5": to_float(latest.get("EMA5")),
         "ema10": to_float(latest.get("EMA10")),
         "ema20": to_float(latest.get("EMA20")),
@@ -623,26 +594,6 @@ def add_traits(row: dict, daily, config: ScannerConfig) -> dict:
         ):
             matched.append(TRAIT_TIGHT_RANGE)
 
-    if TRAIT_BOX_BREAKOUT in config.selected_traits and len(daily) >= config.box_days + 1:
-        prior_box = daily.iloc[-config.box_days - 1 : -1]
-        box_high = to_float(prior_box["High"].max())
-        box_low = to_float(prior_box["Low"].min())
-        box_width_pct = (box_high / box_low - 1) * 100 if box_high > 0 and box_low > 0 else float("inf")
-        row["box_width_pct"] = box_width_pct
-        previous_five = daily.iloc[-6:-1] if len(daily) >= 6 else daily.iloc[:-1]
-        avg_turnover_5 = to_float(previous_five["Turnover"].mean()) if not previous_five.empty else 0
-        if close > box_high:
-            row["breakout_side"] = "Up"
-        if (
-            row.get("breakout_side") == "Up"
-            and box_width_pct <= config.box_width_pct
-            and avg_turnover_5 > 0
-            and turnover >= avg_turnover_5 * config.breakout_turnover_multiple
-            and turnover >= config.min_breakout_turnover
-            and market_cap_ok(config.min_pattern_market_cap)
-        ):
-            matched.append(TRAIT_BOX_BREAKOUT)
-
     selected_count = len(config.selected_traits)
     row["_matched_trait_keys"] = [key for key in TRAIT_LABELS if key in matched]
     row["match_count"] = len(row["_matched_trait_keys"])
@@ -691,16 +642,11 @@ class YFinancePrototypeScanner(tk.Tk):
         self.ema_bullish_days_var = tk.StringVar(value="5")
         self.range_days_var = tk.StringVar(value="3")
         self.range_width_pct_var = tk.StringVar(value="5")
-        self.box_days_var = tk.StringVar(value="20")
-        self.box_width_pct_var = tk.StringVar(value="15")
-        self.min_breakout_turnover_var = tk.StringVar(value="30000000")
-        self.breakout_turnover_multiple_var = tk.StringVar(value="1.5")
 
         self.trait_vars = {
             TRAIT_MOVER: tk.BooleanVar(value=True),
             TRAIT_EMA_BULLISH: tk.BooleanVar(value=True),
             TRAIT_TIGHT_RANGE: tk.BooleanVar(value=True),
-            TRAIT_BOX_BREAKOUT: tk.BooleanVar(value=True),
         }
 
         self._configure_styles()
@@ -948,10 +894,6 @@ class YFinancePrototypeScanner(tk.Tk):
             ("field_ema_bullish_days", self.ema_bullish_days_var),
             ("field_range_days", self.range_days_var),
             ("field_range_width_pct", self.range_width_pct_var),
-            ("field_box_days", self.box_days_var),
-            ("field_box_width_pct", self.box_width_pct_var),
-            ("field_breakout_turnover", self.min_breakout_turnover_var),
-            ("field_breakout_multiple", self.breakout_turnover_multiple_var),
         ]:
             row, _ = self._field(thresholds, row, label_key, variable)
         self.allow_missing_check = ttk.Checkbutton(
@@ -1032,8 +974,6 @@ class YFinancePrototypeScanner(tk.Tk):
             "mover_ratio": 110,
             "turnover": 140,
             "market_cap": 140,
-            "box_width_pct": 125,
-            "breakout_side": 110,
             "ema5": 100,
             "ema10": 100,
             "ema20": 100,
@@ -1044,7 +984,7 @@ class YFinancePrototypeScanner(tk.Tk):
         for column in DISPLAY_COLUMNS:
             self.tree.heading(column, text=localized_column(self.lang, column))
             self.tree.column(column, width=widths.get(column, 120), anchor="e", stretch=False)
-        for column in ["symbol", "last_date", "matched_traits", "breakout_side"]:
+        for column in ["symbol", "last_date", "matched_traits"]:
             self.tree.column(column, anchor="w")
         self.tree.tag_configure("gain", foreground=GAIN)
         self.tree.tag_configure("loss", foreground=LOSS)
@@ -1078,10 +1018,6 @@ class YFinancePrototypeScanner(tk.Tk):
             ema_bullish_days=max(1, int(self.ema_bullish_days_var.get())),
             range_days=max(1, int(self.range_days_var.get())),
             range_width_pct=to_float(self.range_width_pct_var.get()),
-            box_days=max(5, int(self.box_days_var.get())),
-            box_width_pct=to_float(self.box_width_pct_var.get()),
-            min_breakout_turnover=to_float(self.min_breakout_turnover_var.get()),
-            breakout_turnover_multiple=to_float(self.breakout_turnover_multiple_var.get()),
         )
 
     def start_scan(self) -> None:
@@ -1200,8 +1136,6 @@ class YFinancePrototypeScanner(tk.Tk):
                 if column == "matched_traits":
                     trait_keys = row.get("_matched_trait_keys") or []
                     values.append(", ".join(localized_trait(self.lang, key) for key in trait_keys))
-                elif column == "breakout_side":
-                    values.append(localized_breakout_side(self.lang, str(value)))
                 elif column in {"symbol", "last_date"}:
                     values.append(str(value))
                 else:
@@ -1232,7 +1166,6 @@ class YFinancePrototypeScanner(tk.Tk):
             for row in self.results:
                 output = {column: row.get(column, "") for column in DISPLAY_COLUMNS}
                 output["matched_traits"] = ", ".join(localized_trait(self.lang, key) for key in row.get("_matched_trait_keys", []))
-                output["breakout_side"] = localized_breakout_side(self.lang, str(output.get("breakout_side", "")))
                 writer.writerow(output)
         messagebox.showinfo(self._t("dlg_exported_title"), self._t("dlg_exported_body", count=len(self.results)))
 
