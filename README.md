@@ -1,6 +1,6 @@
-# Futu After-Hours Pattern Scanner
+# Futu Closed Pattern Scanner
 
-This is a read-only Python GUI for scanning U.S. stocks by after-hours activity plus the technical traits from the requirement document.
+This is a read-only Python GUI for scanning U.S. stocks by closed activity plus the technical traits from the requirement document.
 
 It does not trade, unlock trading, store passwords, or place orders.
 
