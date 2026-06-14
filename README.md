@@ -1,52 +1,83 @@
-# Futu Closed Pattern Scanner
+# YFinance V3 Pattern Scanner
 
-This is a read-only Python GUI for scanning U.S. stocks by closed activity plus the technical traits from the requirement document.
+This is a read-only Python GUI for scanning U.S. stocks with `yfinance` daily market data.
 
-It does not trade, unlock trading, store passwords, or place orders.
+It does not trade, unlock trading, store passwords, connect to FutuOpenD, or place orders.
+
+## Main File
+
+Run the yfinance version with:
+
+```powershell
+python yfinance_prototype_scanner.py
+```
+
+The older Futu/OpenD scanner is still in `afterhours_scanner.py`, but this README describes the yfinance version.
 
 ## What It Checks
 
-The `Traits` tab maps the document into five selectable checks:
+The scanner maps the V3 requirement document into three independent selectable traits:
 
-- High-volume surge: volume ratio at least `2`, turnover at least `50,000,000`, price at least `5`, and daily gain above the configured threshold.
-- 20D box breakout: price breaks above the prior 20 trading day high after a consolidation box.
-- Daily+weekly EMA tight bullish: EMA5 > EMA10 > EMA20 on both daily and weekly views, with EMA spread within `5%`.
-- Daily EMA bullish 5D+: daily EMA5 > EMA10 > EMA20 for at least one trading week.
-- Near EMA20/50/200: current after-hours price is within the configured percentage of EMA20, EMA50, or EMA200.
+- `+10% high-turnover mover`
+  - Close-to-close gain is at least `10%`.
+  - Mover ratio is at least `2`.
+  - Latest daily turnover is at least `50,000,000`.
+  - Close price is at least `$3`.
+  - Market cap is at least `100,000,000`.
 
-You can choose `Any Selected` or `All Selected` depending on how strict the scan should be.
+- `EMA5/10/20 bullish for 5D+`
+  - EMA5 >= EMA10 >= EMA20 for at least `5` consecutive trading days.
+  - Daily turnover is at least `20,000,000` during that period.
+  - Close price is at least `$3`.
+  - Market cap is at least `500,000,000`.
+
+- `3D+ tight 5% price range`
+  - Recent high/low range is within `5%` for at least `3` trading days.
+  - Daily turnover is at least `20,000,000` during that period.
+  - Close price is at least `$3`.
+  - Market cap is at least `500,000,000`.
+
+Each trait is independent. A stock can match one trait, multiple traits, or none. Use `Any Selected` to show stocks matching at least one selected trait, or `All Selected` to require every selected trait.
 
 ## Setup
 
-1. Install and start `FutuOpenD`.
-2. Log in with the Futubull/Futu account in `FutuOpenD`.
-3. Install Python 3.11 or 3.12.
-4. Install the SDK:
+1. Install Python.
+2. Install the yfinance dependencies:
 
 ```powershell
-python -m pip install -r requirements.txt
+python -m pip install yfinance pandas
 ```
 
-5. Run the GUI:
+3. Run the GUI:
 
 ```powershell
-python afterhours_scanner.py
+python yfinance_prototype_scanner.py
 ```
+
+No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota is required for this version.
 
 ## How To Use
 
-- Keep `OpenD Host` as `127.0.0.1` and `OpenD Port` as `11111` unless you changed OpenD settings.
-- Enter a small manual list like `AAPL, TSLA, NVDA`, or clear the symbols box to scan the U.S. stock universe.
-- Use the `Scan` tab for after-hours filters such as active after-hours volume, after-hours price, after-hours percentage move, and gainers/losers.
-- Use the `Traits` tab to select the technical characteristics and tune thresholds.
-- Click `Dad Preset` to reset the technical thresholds to the document defaults.
-- Click `Export CSV` after a scan to save the result table.
+- Leave `Source` as `U.S. Stock Universe` to load U.S. listed symbols from NASDAQ Trader symbol directories.
+- Use `Manual Symbols` if you only want to test a short list such as `AAPL, TSLA, NVDA`.
+- Set `Max Symbols` to `0` to scan the whole loaded universe, or use a smaller number while testing.
+- Adjust the V3 thresholds in the left sidebar.
+- Select one or more traits.
+- Click `Run Scan`.
+- Click `Export CSV` after a scan to save the current results.
+- Use the `Chinese` / `English` language button to switch the interface language.
 
-## Important Limits
+## Data Notes
 
-The app runs a two-stage scan:
+This prototype uses `yfinance`, which retrieves Yahoo Finance data. It is useful for prototyping and research, but it is not an official market data feed.
 
-1. `get_market_snapshot([...])` scans after-hours fields in batches.
-2. `request_history_kline(...)` checks daily/weekly EMA and breakout traits for the top snapshot candidates.
+Important limitations:
 
-The second stage uses historical candlestick quota, so keep `Max Tech Checks` modest while testing. Futu market data still depends on quote permissions and API quotas. U.S. quote access generally covers NYSE, NYSE-American, and Nasdaq equities/ETFs; OTC securities are unsupported in the Futu OpenAPI quote permission docs.
+- The latest daily bar may be delayed, adjusted, incomplete, or unavailable.
+- Yahoo/yfinance can throttle requests, especially when scanning the full U.S. universe.
+- Market cap can be missing for some symbols. The app has an `Allow missing market cap` option, but turning it on makes market-cap filters less strict.
+- Mover ratio is approximated as latest daily volume divided by the previous 20-day average volume. It is not Futu's real-time volume ratio.
+- Turnover is approximated as `Close * Volume`.
+- The U.S. stock universe is filtered from NASDAQ Trader symbol files and excludes many ETFs, warrants, units, rights, preferreds, notes, and obvious non-common-stock instruments.
+
+For more reliable production scanning, use a paid data provider with licensed historical daily OHLCV, market cap, and full-symbol coverage.
