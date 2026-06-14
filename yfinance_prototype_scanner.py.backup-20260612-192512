@@ -1,0 +1,819 @@
+from __future__ import annotations
+
+import csv
+import queue
+import threading
+import time
+import tkinter as tk
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+try:
+    import pandas as pd
+    import yfinance as yf
+except ImportError:
+    pd = None
+    yf = None
+
+
+TRAIT_MOVER = "mover"
+TRAIT_BOX_BREAKOUT = "box_breakout"
+TRAIT_EMA_TIGHT = "ema_tight"
+TRAIT_NEAR_EMA20 = "near_ema20"
+TRAIT_NEAR_EMA50 = "near_ema50"
+TRAIT_NEAR_EMA200 = "near_ema200"
+
+TRAIT_LABELS = {
+    TRAIT_MOVER: "+/-10% mover",
+    TRAIT_BOX_BREAKOUT: "20D turnover box breakout",
+    TRAIT_EMA_TIGHT: "EMA5/10/20 tight flat/up",
+    TRAIT_NEAR_EMA20: "Near rising EMA20 + EMA5>10>20",
+    TRAIT_NEAR_EMA50: "Near rising EMA50",
+    TRAIT_NEAR_EMA200: "Near rising EMA200",
+}
+
+DISPLAY_COLUMNS = [
+    "symbol",
+    "last_date",
+    "match_count",
+    "matched_traits",
+    "close",
+    "move_pct",
+    "gap_pct",
+    "mover_ratio",
+    "turnover",
+    "market_cap",
+    "box_width_pct",
+    "breakout_side",
+    "ema5",
+    "ema10",
+    "ema20",
+    "ema50",
+    "ema200",
+    "near_ema",
+]
+
+COLUMN_LABELS = {
+    "symbol": "Symbol",
+    "last_date": "Date",
+    "match_count": "Matches",
+    "matched_traits": "Matched Traits",
+    "close": "Close",
+    "move_pct": "Move %",
+    "gap_pct": "Gap %",
+    "mover_ratio": "Mover Ratio",
+    "turnover": "Turnover",
+    "market_cap": "Market Cap",
+    "box_width_pct": "Box Width %",
+    "breakout_side": "Breakout",
+    "ema5": "EMA5",
+    "ema10": "EMA10",
+    "ema20": "EMA20",
+    "ema50": "EMA50",
+    "ema200": "EMA200",
+    "near_ema": "Near EMA",
+}
+
+APP_BG = "#0f1115"
+PANEL_BG = "#151922"
+FIELD_BG = "#10141d"
+TEXT = "#e6e8ee"
+MUTED = "#9ba3b4"
+ACCENT = "#10a37f"
+GAIN = "#63d297"
+LOSS = "#f87171"
+
+DEFAULT_SYMBOLS = """
+AAPL, MSFT, NVDA, AMZN, META, GOOGL, AVGO, TSLA, AMD, NFLX,
+JPM, BAC, XOM, CVX, KO, PEP, COST, WMT, AAL, AA, ABT, AON,
+ACA, ABM, ABG, ACHC, GFI, PLTR, SMCI, SOFI, RIVN
+""".strip()
+
+SOURCE_UNIVERSE = "U.S. Stock Universe"
+SOURCE_MANUAL = "Manual Symbols"
+NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+
+
+@dataclass
+class ScannerConfig:
+    source_mode: str
+    symbols: list[str]
+    period: str
+    selected_traits: set[str]
+    match_mode: str
+    max_symbols: int
+    min_mover_ratio: float
+    min_mover_turnover: float
+    min_abs_move_pct: float
+    min_price: float
+    min_market_cap: float
+    allow_missing_market_cap: bool
+    min_daily_turnover: float
+    liquidity_days: int
+    min_breakout_turnover: float
+    breakout_turnover_multiple: float
+    box_days: int
+    box_width_pct: float
+    ema_tight_pct: float
+    ema_lookback_days: int
+    near_ema_pct: float
+
+
+def to_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if str(value).strip() == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def clean_number(value) -> str:
+    number = to_float(value)
+    if abs(number) < 1e-12:
+        return ""
+    if abs(number) >= 1_000_000:
+        return f"{number:,.0f}"
+    if abs(number) >= 1_000:
+        return f"{number:,.2f}"
+    return f"{number:.4f}".rstrip("0").rstrip(".")
+
+
+def parse_symbols(raw: str) -> list[str]:
+    symbols: list[str] = []
+    for part in raw.replace("\n", ",").replace(" ", ",").split(","):
+        symbol = part.strip().upper()
+        if not symbol:
+            continue
+        if symbol.startswith("US."):
+            symbol = symbol[3:]
+        symbol = symbol.replace(".", "-")
+        symbols.append(symbol)
+    return list(dict.fromkeys(symbols))
+
+
+def yfinance_symbol(symbol: str) -> str:
+    return symbol.strip().upper().replace(".", "-")
+
+
+def looks_like_common_stock(symbol: str, name: str) -> bool:
+    lowered = name.lower()
+    blocked_words = [
+        " warrant",
+        " warrants",
+        " right",
+        " rights",
+        " unit",
+        " units",
+        " preferred",
+        " preference",
+        " notes due",
+        " senior notes",
+        " bond",
+        " debenture",
+        " etf",
+        " fund",
+        " trust preferred",
+    ]
+    if any(word in lowered for word in blocked_words):
+        return False
+    if symbol.endswith(("W", "WS", "WT", "U", "R")) and any(word in lowered for word in ["warrant", "unit", "right"]):
+        return False
+    return True
+
+
+def load_symbol_directory() -> list[str]:
+    symbols: list[str] = []
+
+    with urllib.request.urlopen(NASDAQ_LISTED_URL, timeout=20) as response:
+        text = response.read().decode("utf-8", errors="replace")
+    for line in text.splitlines()[1:]:
+        if not line or line.startswith("File Creation Time"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 8:
+            continue
+        symbol, name, _, test_issue, _, _, etf, _ = parts[:8]
+        symbol = symbol.strip()
+        if test_issue == "Y" or etf == "Y":
+            continue
+        if symbol and looks_like_common_stock(symbol, name):
+            symbols.append(yfinance_symbol(symbol))
+
+    with urllib.request.urlopen(OTHER_LISTED_URL, timeout=20) as response:
+        text = response.read().decode("utf-8", errors="replace")
+    for line in text.splitlines()[1:]:
+        if not line or line.startswith("File Creation Time"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 7:
+            continue
+        symbol, name, _, _, etf, _, test_issue = parts[:7]
+        symbol = symbol.strip()
+        if test_issue == "Y" or etf == "Y":
+            continue
+        if symbol and looks_like_common_stock(symbol, name):
+            symbols.append(yfinance_symbol(symbol))
+
+    return list(dict.fromkeys(symbols))
+
+
+def chunks(items: list[str], size: int):
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+def normalize_history(data):
+    if pd is None or data is None or getattr(data, "empty", True):
+        return None
+
+    daily = data.copy()
+    daily.columns = [str(column).title() for column in daily.columns]
+    required = ["Open", "High", "Low", "Close", "Volume"]
+    if any(column not in daily.columns for column in required):
+        return None
+
+    daily = daily[required].dropna(subset=["Close", "High", "Low"])
+    if daily.empty:
+        return None
+
+    for column in required:
+        daily[column] = daily[column].apply(to_float)
+    daily = daily[daily["Close"] > 0]
+    if daily.empty:
+        return None
+
+    daily["Turnover"] = daily["Close"] * daily["Volume"]
+    for span in [5, 10, 20, 50, 200]:
+        daily[f"EMA{span}"] = daily["Close"].ewm(span=span, adjust=False).mean()
+    return daily
+
+
+def get_symbol_frame(raw, symbol: str, symbol_count: int):
+    if raw is None or getattr(raw, "empty", True):
+        return None
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw if symbol_count == 1 else None
+    if symbol in raw.columns.get_level_values(0):
+        return raw[symbol]
+    upper_lookup = {str(name).upper(): name for name in raw.columns.get_level_values(0)}
+    actual = upper_lookup.get(symbol.upper())
+    if actual is not None:
+        return raw[actual]
+    return None
+
+
+def percent_distance(value: float, reference: float) -> float:
+    if value <= 0 or reference <= 0:
+        return float("inf")
+    return abs(value - reference) / reference * 100
+
+
+def latest_turnover_ok(daily, min_turnover: float) -> bool:
+    if min_turnover <= 0 or daily is None or daily.empty:
+        return True
+    return to_float(daily.iloc[-1].get("Turnover")) >= min_turnover
+
+
+def recent_turnover_floor_ok(daily, days: int, min_turnover: float) -> bool:
+    if min_turnover <= 0:
+        return True
+    if daily is None or len(daily) < days:
+        return False
+    return bool((daily.tail(days)["Turnover"].apply(to_float) >= min_turnover).all())
+
+
+def market_cap_ok(row: dict, config: ScannerConfig) -> bool:
+    market_cap = to_float(row.get("market_cap"))
+    if market_cap <= 0:
+        return config.allow_missing_market_cap
+    return market_cap >= config.min_market_cap
+
+
+def ema_rising(daily, span: int, lookback_days: int) -> bool:
+    if len(daily) < lookback_days + 1:
+        return False
+    values = daily[f"EMA{span}"].tail(lookback_days + 1)
+    return to_float(values.iloc[-1]) >= to_float(values.iloc[0])
+
+
+def ema_tight_for_days(daily, threshold_pct: float, lookback_days: int) -> bool:
+    if len(daily) < lookback_days:
+        return False
+    for _, row in daily.tail(lookback_days).iterrows():
+        values = [to_float(row.get("EMA5")), to_float(row.get("EMA10")), to_float(row.get("EMA20"))]
+        if any(value <= 0 for value in values):
+            return False
+        average = sum(values) / len(values)
+        spread = (max(values) - min(values)) / average * 100 if average > 0 else float("inf")
+        if spread > threshold_pct:
+            return False
+    return True
+
+
+def ema_cluster_flat_or_up(daily, lookback_days: int) -> bool:
+    if len(daily) < lookback_days + 1:
+        return False
+    for span in [5, 10, 20]:
+        values = daily[f"EMA{span}"].tail(lookback_days + 1)
+        if to_float(values.iloc[-1]) < to_float(values.iloc[0]):
+            return False
+    return True
+
+
+def ema_bullish_5_10_20(row) -> bool:
+    return to_float(row.get("EMA5")) >= to_float(row.get("EMA10")) >= to_float(row.get("EMA20")) > 0
+
+
+def compute_market_cap(symbol: str) -> float:
+    if yf is None:
+        return 0.0
+    try:
+        ticker = yf.Ticker(symbol)
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info is not None:
+            for key in ["market_cap", "marketCap"]:
+                try:
+                    market_cap = fast_info.get(key)
+                    if market_cap:
+                        return to_float(market_cap)
+                except Exception:
+                    pass
+            try:
+                shares = to_float(fast_info.get("shares"))
+                last_price = to_float(fast_info.get("lastPrice"))
+                if shares > 0 and last_price > 0:
+                    return shares * last_price
+            except Exception:
+                pass
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+def base_row(symbol: str, daily, market_cap: float) -> dict:
+    latest = daily.iloc[-1]
+    previous = daily.iloc[-2] if len(daily) >= 2 else latest
+    previous_20 = daily.iloc[-21:-1] if len(daily) >= 21 else daily.iloc[:-1]
+    close = to_float(latest.get("Close"))
+    prev_close = to_float(previous.get("Close"))
+    open_price = to_float(latest.get("Open"))
+    turnover = to_float(latest.get("Turnover"))
+    avg_volume_20 = to_float(previous_20["Volume"].mean()) if not previous_20.empty else 0
+    mover_ratio = to_float(latest.get("Volume")) / avg_volume_20 if avg_volume_20 > 0 else 0
+    move_pct = (close - prev_close) / prev_close * 100 if close > 0 and prev_close > 0 else 0
+    gap_pct = (open_price - prev_close) / prev_close * 100 if open_price > 0 and prev_close > 0 else 0
+
+    return {
+        "symbol": symbol,
+        "last_date": str(daily.index[-1].date()) if hasattr(daily.index[-1], "date") else str(daily.index[-1]),
+        "match_count": 0,
+        "matched_traits": "",
+        "close": close,
+        "move_pct": move_pct,
+        "gap_pct": gap_pct,
+        "mover_ratio": mover_ratio,
+        "turnover": turnover,
+        "market_cap": market_cap,
+        "box_width_pct": "",
+        "breakout_side": "",
+        "ema5": to_float(latest.get("EMA5")),
+        "ema10": to_float(latest.get("EMA10")),
+        "ema20": to_float(latest.get("EMA20")),
+        "ema50": to_float(latest.get("EMA50")),
+        "ema200": to_float(latest.get("EMA200")),
+        "near_ema": "",
+        "_matched_trait_keys": [],
+    }
+
+
+def add_traits(row: dict, daily, config: ScannerConfig) -> dict:
+    matched: list[str] = []
+    latest = daily.iloc[-1]
+    close = to_float(latest.get("Close"))
+    turnover = to_float(latest.get("Turnover"))
+
+    if TRAIT_MOVER in config.selected_traits:
+        if (
+            close >= config.min_price
+            and abs(to_float(row.get("move_pct"))) >= config.min_abs_move_pct
+            and to_float(row.get("mover_ratio")) >= config.min_mover_ratio
+            and turnover >= config.min_mover_turnover
+        ):
+            matched.append(TRAIT_MOVER)
+
+    if TRAIT_BOX_BREAKOUT in config.selected_traits and len(daily) >= config.box_days + 1:
+        prior_box = daily.iloc[-config.box_days - 1 : -1]
+        box_high = to_float(prior_box["High"].max())
+        box_low = to_float(prior_box["Low"].min())
+        box_width_pct = (box_high / box_low - 1) * 100 if box_high > 0 and box_low > 0 else float("inf")
+        row["box_width_pct"] = box_width_pct
+        previous_five = daily.iloc[-6:-1] if len(daily) >= 6 else daily.iloc[:-1]
+        avg_turnover_5 = to_float(previous_five["Turnover"].mean()) if not previous_five.empty else 0
+        breakout_side = ""
+        if close > box_high:
+            breakout_side = "Up"
+        elif close < box_low:
+            breakout_side = "Down"
+        row["breakout_side"] = breakout_side
+        if (
+            breakout_side
+            and box_width_pct <= config.box_width_pct
+            and market_cap_ok(row, config)
+            and avg_turnover_5 > 0
+            and turnover >= avg_turnover_5 * config.breakout_turnover_multiple
+            and turnover >= config.min_breakout_turnover
+        ):
+            matched.append(TRAIT_BOX_BREAKOUT)
+
+    if TRAIT_EMA_TIGHT in config.selected_traits:
+        if (
+            close >= config.min_price
+            and market_cap_ok(row, config)
+            and recent_turnover_floor_ok(daily, config.liquidity_days, config.min_daily_turnover)
+            and ema_tight_for_days(daily, config.ema_tight_pct, config.ema_lookback_days)
+            and ema_cluster_flat_or_up(daily, config.ema_lookback_days)
+        ):
+            matched.append(TRAIT_EMA_TIGHT)
+
+    near_parts: list[str] = []
+    for trait_key, span in [
+        (TRAIT_NEAR_EMA20, 20),
+        (TRAIT_NEAR_EMA50, 50),
+        (TRAIT_NEAR_EMA200, 200),
+    ]:
+        if trait_key not in config.selected_traits:
+            continue
+        ema_value = to_float(latest.get(f"EMA{span}"))
+        distance = percent_distance(close, ema_value)
+        extra_ok = True
+        if span == 20:
+            extra_ok = ema_bullish_5_10_20(latest)
+        if (
+            distance <= config.near_ema_pct
+            and ema_rising(daily, span, config.ema_lookback_days)
+            and extra_ok
+            and close >= config.min_price
+            and market_cap_ok(row, config)
+            and latest_turnover_ok(daily, config.min_daily_turnover)
+        ):
+            matched.append(trait_key)
+            near_parts.append(f"EMA{span} {distance:.2f}%")
+
+    selected_count = len(config.selected_traits)
+    row["_matched_trait_keys"] = [key for key in TRAIT_LABELS if key in matched]
+    row["match_count"] = len(row["_matched_trait_keys"])
+    row["matched_traits"] = ", ".join(TRAIT_LABELS[key] for key in row["_matched_trait_keys"])
+    row["near_ema"] = ", ".join(near_parts)
+    if selected_count == 0:
+        row["_trait_pass"] = True
+    elif config.match_mode == "All Selected":
+        row["_trait_pass"] = row["match_count"] == selected_count
+    else:
+        row["_trait_pass"] = row["match_count"] > 0
+    return row
+
+
+class YFinancePrototypeScanner(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("YFinance Prototype Scanner")
+        self.geometry("1320x780")
+        self.minsize(1120, 660)
+        self.configure(bg=APP_BG)
+
+        self.results: list[dict] = []
+        self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.stop_event = threading.Event()
+        self.worker: threading.Thread | None = None
+
+        self.source_mode_var = tk.StringVar(value=SOURCE_UNIVERSE)
+        self.symbols_var = tk.StringVar(value=DEFAULT_SYMBOLS)
+        self.period_var = tk.StringVar(value="2y")
+        self.max_symbols_var = tk.StringVar(value="500")
+        self.match_mode_var = tk.StringVar(value="Any Selected")
+        self.min_mover_ratio_var = tk.StringVar(value="2")
+        self.min_mover_turnover_var = tk.StringVar(value="50000000")
+        self.min_abs_move_pct_var = tk.StringVar(value="10")
+        self.min_price_var = tk.StringVar(value="3")
+        self.min_market_cap_var = tk.StringVar(value="500000000")
+        self.allow_missing_market_cap_var = tk.BooleanVar(value=True)
+        self.min_daily_turnover_var = tk.StringVar(value="10000000")
+        self.liquidity_days_var = tk.StringVar(value="20")
+        self.min_breakout_turnover_var = tk.StringVar(value="30000000")
+        self.breakout_turnover_multiple_var = tk.StringVar(value="1.5")
+        self.box_days_var = tk.StringVar(value="20")
+        self.box_width_pct_var = tk.StringVar(value="15")
+        self.ema_tight_pct_var = tk.StringVar(value="3")
+        self.ema_lookback_days_var = tk.StringVar(value="5")
+        self.near_ema_pct_var = tk.StringVar(value="2")
+
+        self.trait_vars = {
+            TRAIT_MOVER: tk.BooleanVar(value=False),
+            TRAIT_BOX_BREAKOUT: tk.BooleanVar(value=False),
+            TRAIT_EMA_TIGHT: tk.BooleanVar(value=False),
+            TRAIT_NEAR_EMA20: tk.BooleanVar(value=True),
+            TRAIT_NEAR_EMA50: tk.BooleanVar(value=False),
+            TRAIT_NEAR_EMA200: tk.BooleanVar(value=False),
+        }
+
+        self._configure_styles()
+        self._build_layout()
+        self.after(100, self._poll_messages)
+
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure(".", background=APP_BG, foreground=TEXT, fieldbackground=FIELD_BG)
+        style.configure("TFrame", background=APP_BG)
+        style.configure("Panel.TFrame", background=PANEL_BG)
+        style.configure("TLabel", background=APP_BG, foreground=TEXT)
+        style.configure("Muted.TLabel", background=APP_BG, foreground=MUTED)
+        style.configure("TCheckbutton", background=PANEL_BG, foreground=TEXT)
+        style.configure("TButton", background="#202637", foreground=TEXT, padding=8)
+        style.configure("Accent.TButton", background=ACCENT, foreground="#07110f", padding=8)
+        style.configure("TEntry", fieldbackground=FIELD_BG, foreground=TEXT)
+        style.configure("Treeview", background="#10141d", foreground=TEXT, fieldbackground="#10141d", rowheight=26)
+        style.configure("Treeview.Heading", background="#202637", foreground="#c9d6f2")
+        style.map("Treeview", background=[("selected", "#284236")])
+
+    def _build_layout(self) -> None:
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        left = ttk.Frame(self, style="Panel.TFrame", padding=16)
+        left.grid(row=0, column=0, sticky="ns")
+        left.columnconfigure(0, weight=1)
+
+        ttk.Label(left, text="YFinance Prototype", font=("Segoe UI Semibold", 15), background=PANEL_BG).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            left,
+            text="Free prototype data. Latest daily bar may be delayed or partial.",
+            style="Muted.TLabel",
+            background=PANEL_BG,
+            wraplength=310,
+        ).grid(row=1, column=0, sticky="ew", pady=(2, 12))
+
+        self.symbol_text = tk.Text(left, width=38, height=7, bg=FIELD_BG, fg=TEXT, insertbackground=TEXT, relief="flat")
+        self.symbol_text.insert("1.0", DEFAULT_SYMBOLS)
+        self.symbol_text.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+
+        controls = ttk.Frame(left, style="Panel.TFrame")
+        controls.grid(row=3, column=0, sticky="ew")
+        controls.columnconfigure(1, weight=1)
+        row = 0
+        ttk.Label(controls, text="Source", background=PANEL_BG).grid(row=row, column=0, sticky="w", pady=3)
+        self.source_combo = ttk.Combobox(
+            controls,
+            textvariable=self.source_mode_var,
+            values=[SOURCE_UNIVERSE, SOURCE_MANUAL],
+            state="readonly",
+        )
+        self.source_combo.grid(row=row, column=1, sticky="ew", pady=3)
+        row += 1
+        for label, variable in [
+            ("Period", self.period_var),
+            ("Max Symbols (0 = all)", self.max_symbols_var),
+            ("Match Mode", self.match_mode_var),
+            ("Near EMA %", self.near_ema_pct_var),
+            ("Mover Ratio", self.min_mover_ratio_var),
+            ("Mover Turnover", self.min_mover_turnover_var),
+            ("Min Abs Move %", self.min_abs_move_pct_var),
+            ("Min Price", self.min_price_var),
+            ("Min Market Cap", self.min_market_cap_var),
+            ("Daily Turnover", self.min_daily_turnover_var),
+            ("Liquidity Days", self.liquidity_days_var),
+            ("Breakout Turnover", self.min_breakout_turnover_var),
+            ("Breakout Multiple", self.breakout_turnover_multiple_var),
+            ("Box Days", self.box_days_var),
+            ("Box Width %", self.box_width_pct_var),
+            ("EMA Tight %", self.ema_tight_pct_var),
+            ("EMA Lookback", self.ema_lookback_days_var),
+        ]:
+            ttk.Label(controls, text=label, background=PANEL_BG).grid(row=row, column=0, sticky="w", pady=3)
+            if label == "Match Mode":
+                ttk.Combobox(controls, textvariable=variable, values=["Any Selected", "All Selected"], state="readonly").grid(row=row, column=1, sticky="ew", pady=3)
+            else:
+                ttk.Entry(controls, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=3)
+            row += 1
+
+        ttk.Checkbutton(
+            controls,
+            text="Allow missing market cap",
+            variable=self.allow_missing_market_cap_var,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        row += 1
+
+        trait_frame = ttk.Frame(left, style="Panel.TFrame")
+        trait_frame.grid(row=4, column=0, sticky="ew", pady=(12, 12))
+        for index, key in enumerate(TRAIT_LABELS):
+            ttk.Checkbutton(trait_frame, text=TRAIT_LABELS[key], variable=self.trait_vars[key]).grid(row=index, column=0, sticky="w", pady=3)
+
+        button_frame = ttk.Frame(left, style="Panel.TFrame")
+        button_frame.grid(row=5, column=0, sticky="ew")
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        self.scan_button = ttk.Button(button_frame, text="Scan", command=self.start_scan, style="Accent.TButton")
+        self.scan_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.stop_button = ttk.Button(button_frame, text="Stop", command=self.stop_scan, state="disabled")
+        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ttk.Button(left, text="Export CSV", command=self.export_csv).grid(row=6, column=0, sticky="ew", pady=(10, 0))
+
+        right = ttk.Frame(self, padding=16)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.rowconfigure(2, weight=1)
+        right.columnconfigure(0, weight=1)
+        ttk.Label(right, text="Results", font=("Segoe UI Semibold", 16)).grid(row=0, column=0, sticky="w")
+        self.status_var = tk.StringVar(value="Install yfinance if needed, then scan a small symbol list first.")
+        ttk.Label(right, textvariable=self.status_var, style="Muted.TLabel").grid(row=1, column=0, sticky="ew", pady=(4, 12))
+
+        table_frame = ttk.Frame(right)
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        self.tree = ttk.Treeview(table_frame, columns=DISPLAY_COLUMNS, show="headings")
+        for column in DISPLAY_COLUMNS:
+            self.tree.heading(column, text=COLUMN_LABELS[column])
+            self.tree.column(column, width=130, anchor="e")
+        for column in ["symbol", "last_date", "matched_traits", "breakout_side", "near_ema"]:
+            self.tree.column(column, anchor="w")
+        self.tree.tag_configure("gain", foreground=GAIN)
+        self.tree.tag_configure("loss", foreground=LOSS)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+
+    def read_config(self) -> ScannerConfig:
+        symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
+        max_symbols = max(0, int(self.max_symbols_var.get()))
+        return ScannerConfig(
+            source_mode=self.source_mode_var.get(),
+            symbols=symbols[:max_symbols] if max_symbols > 0 else symbols,
+            period=self.period_var.get().strip() or "2y",
+            selected_traits={key for key, var in self.trait_vars.items() if var.get()},
+            match_mode=self.match_mode_var.get(),
+            max_symbols=max_symbols,
+            min_mover_ratio=to_float(self.min_mover_ratio_var.get()),
+            min_mover_turnover=to_float(self.min_mover_turnover_var.get()),
+            min_abs_move_pct=to_float(self.min_abs_move_pct_var.get()),
+            min_price=to_float(self.min_price_var.get()),
+            min_market_cap=to_float(self.min_market_cap_var.get()),
+            allow_missing_market_cap=self.allow_missing_market_cap_var.get(),
+            min_daily_turnover=to_float(self.min_daily_turnover_var.get()),
+            liquidity_days=max(1, int(self.liquidity_days_var.get())),
+            min_breakout_turnover=to_float(self.min_breakout_turnover_var.get()),
+            breakout_turnover_multiple=to_float(self.breakout_turnover_multiple_var.get()),
+            box_days=max(5, int(self.box_days_var.get())),
+            box_width_pct=to_float(self.box_width_pct_var.get()),
+            ema_tight_pct=to_float(self.ema_tight_pct_var.get()),
+            ema_lookback_days=max(1, int(self.ema_lookback_days_var.get())),
+            near_ema_pct=to_float(self.near_ema_pct_var.get()),
+        )
+
+    def start_scan(self) -> None:
+        if yf is None or pd is None:
+            messagebox.showerror("Missing dependency", "Install first:\n\npython -m pip install yfinance pandas")
+            return
+        try:
+            config = self.read_config()
+        except ValueError as exc:
+            messagebox.showerror("Invalid input", str(exc))
+            return
+        if config.source_mode == SOURCE_MANUAL and not config.symbols:
+            messagebox.showinfo("No symbols", "Enter at least one ticker symbol.")
+            return
+        self.results.clear()
+        self.clear_table()
+        self.stop_event.clear()
+        self.scan_button.configure(state="disabled")
+        self.stop_button.configure(state="normal")
+        self.status_var.set("Preparing symbols...")
+        self.worker = threading.Thread(target=self.scan_worker, args=(config,), daemon=True)
+        self.worker.start()
+
+    def stop_scan(self) -> None:
+        self.stop_event.set()
+        self.status_var.set("Stopping after the current request...")
+
+    def scan_worker(self, config: ScannerConfig) -> None:
+        try:
+            symbols = list(config.symbols)
+            if config.source_mode == SOURCE_UNIVERSE:
+                self.messages.put(("status", "Loading U.S. stock universe from NASDAQ Trader..."))
+                symbols = load_symbol_directory()
+                if config.max_symbols > 0:
+                    symbols = symbols[: config.max_symbols]
+            if not symbols:
+                self.messages.put(("error", "No symbols to scan."))
+                return
+            rows: list[dict] = []
+            total = len(symbols)
+            checked = 0
+            for batch in chunks(symbols, 80):
+                if self.stop_event.is_set():
+                    break
+                self.messages.put(("status", f"Downloading {checked + 1}-{min(checked + len(batch), total)} of {total} from yfinance..."))
+                raw = yf.download(
+                    tickers=" ".join(batch),
+                    period=config.period,
+                    interval="1d",
+                    group_by="ticker",
+                    auto_adjust=True,
+                    threads=True,
+                    progress=False,
+                    timeout=30,
+                )
+                for symbol in batch:
+                    if self.stop_event.is_set():
+                        break
+                    checked += 1
+                    self.messages.put(("status", f"Checking {symbol} ({checked}/{total})..."))
+                    frame = get_symbol_frame(raw, symbol, len(batch))
+                    daily = normalize_history(frame)
+                    if daily is None or len(daily) < 60:
+                        continue
+                    market_cap = compute_market_cap(symbol)
+                    row = add_traits(base_row(symbol, daily, market_cap), daily, config)
+                    if row.get("_trait_pass"):
+                        rows.append(row)
+                    time.sleep(0.03)
+                self.messages.put(("rows", sorted(rows, key=lambda item: (to_float(item.get("match_count")), to_float(item.get("turnover"))), reverse=True)))
+            rows.sort(key=lambda item: (to_float(item.get("match_count")), to_float(item.get("turnover"))), reverse=True)
+            self.messages.put(("rows", rows))
+            self.messages.put(("done", None))
+        except Exception as exc:  # noqa: BLE001
+            self.messages.put(("error", str(exc)))
+
+    def _poll_messages(self) -> None:
+        try:
+            while True:
+                kind, payload = self.messages.get_nowait()
+                if kind == "status":
+                    self.status_var.set(str(payload))
+                elif kind == "rows":
+                    self.results = list(payload)
+                    self.refresh_table()
+                elif kind == "error":
+                    self.status_var.set("Error.")
+                    messagebox.showerror("Scan failed", str(payload))
+                    self.scan_finished()
+                elif kind == "done":
+                    self.status_var.set(f"Done. {len(self.results)} matches.")
+                    self.scan_finished()
+        except queue.Empty:
+            pass
+        self.after(100, self._poll_messages)
+
+    def scan_finished(self) -> None:
+        self.scan_button.configure(state="normal")
+        self.stop_button.configure(state="disabled")
+        self.stop_event.clear()
+
+    def refresh_table(self) -> None:
+        self.clear_table()
+        for row in self.results:
+            values = []
+            for column in DISPLAY_COLUMNS:
+                value = row.get(column, "")
+                if column in {"symbol", "last_date", "matched_traits", "breakout_side", "near_ema"}:
+                    values.append(str(value))
+                else:
+                    values.append(clean_number(value))
+            tag = "gain" if to_float(row.get("move_pct")) > 0 else "loss" if to_float(row.get("move_pct")) < 0 else "neutral"
+            self.tree.insert("", "end", values=values, tags=(tag,))
+
+    def clear_table(self) -> None:
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+    def export_csv(self) -> None:
+        if not self.results:
+            messagebox.showinfo("No results", "Run a scan first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export yfinance prototype results",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile="yfinance_prototype_results.csv",
+        )
+        if not path:
+            return
+        with Path(path).open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=DISPLAY_COLUMNS)
+            writer.writeheader()
+            for row in self.results:
+                writer.writerow({column: row.get(column, "") for column in DISPLAY_COLUMNS})
+        messagebox.showinfo("Exported", f"Saved {len(self.results)} rows.")
+
+
+if __name__ == "__main__":
+    app = YFinancePrototypeScanner()
+    app.mainloop()
