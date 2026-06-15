@@ -38,10 +38,10 @@ The scanner maps the requirement document into four independent selectable trait
   - Market cap is at least `500,000,000`.
 
 - `20D high-turnover box breakout`
-  - The previous `20` trading days form a price box.
+  - The latest `20` trading days ending on the current/latest day form the measured price box.
   - Box width is calculated as `box_high / box_low - 1`.
   - Box width must be no more than `15%`.
-  - The latest close must break above the prior box high.
+  - The latest close must break above the upper edge formed by the earlier days in that box window.
   - Latest turnover must be at least `1.5` times the prior 5-day average turnover.
   - Latest turnover must be at least `30,000,000`.
   - Market cap is at least `500,000,000`.

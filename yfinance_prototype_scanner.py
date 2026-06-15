@@ -623,15 +623,17 @@ def add_traits(row: dict, daily, config: ScannerConfig) -> dict:
         ):
             matched.append(TRAIT_TIGHT_RANGE)
 
-    if TRAIT_BOX_BREAKOUT in config.selected_traits and len(daily) >= config.box_days + 1:
-        prior_box = daily.iloc[-config.box_days - 1 : -1]
-        box_high = to_float(prior_box["High"].max())
-        box_low = to_float(prior_box["Low"].min())
+    if TRAIT_BOX_BREAKOUT in config.selected_traits and len(daily) >= config.box_days:
+        box_window = daily.tail(config.box_days)
+        setup_box = box_window.iloc[:-1]
+        box_high = to_float(box_window["High"].max())
+        box_low = to_float(box_window["Low"].min())
+        breakout_level = to_float(setup_box["High"].max()) if not setup_box.empty else 0
         box_width_pct = (box_high / box_low - 1) * 100 if box_high > 0 and box_low > 0 else float("inf")
         row["box_width_pct"] = box_width_pct
         previous_five = daily.iloc[-6:-1] if len(daily) >= 6 else daily.iloc[:-1]
         avg_turnover_5 = to_float(previous_five["Turnover"].mean()) if not previous_five.empty else 0
-        if close > box_high:
+        if close > breakout_level:
             row["breakout_side"] = "Up"
         if (
             row.get("breakout_side") == "Up"
