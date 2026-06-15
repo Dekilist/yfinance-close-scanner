@@ -184,7 +184,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "Missing dependency",
         "dlg_missing_dep_body": "Install first:\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "Invalid input",
-        "dlg_invalid_date_body": "Choose both Close Month and Close Day, or leave both blank for today's date.",
+        "dlg_invalid_date_body": "Choose both Close Month and Close Day, or leave both blank for latest.",
         "dlg_no_symbols_title": "No symbols",
         "dlg_no_symbols_body": "Enter at least one ticker symbol.",
         "err_no_symbols_to_scan": "No symbols to scan.",
@@ -242,7 +242,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "缺少依赖",
         "dlg_missing_dep_body": "请先安装：\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "输入无效",
-        "dlg_invalid_date_body": "请选择收盘月份和日期，或两项都留空使用今天日期。",
+        "dlg_invalid_date_body": "请选择收盘月份和日期，或两项都留空使用最新日期。",
         "dlg_no_symbols_title": "没有股票代码",
         "dlg_no_symbols_body": "请至少输入一个股票代码。",
         "err_no_symbols_to_scan": "没有可扫描的股票代码。",
@@ -276,10 +276,7 @@ ACA, ABM, ABG, ACHC, GFI, PLTR, SMCI, SOFI, RIVN
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
-TODAY = date.today()
-CURRENT_YEAR = TODAY.year
-DEFAULT_MONTH = f"{TODAY.month:02d}"
-DEFAULT_DAY = f"{TODAY.day:02d}"
+CURRENT_YEAR = date.today().year
 MONTH_OPTIONS = [""] + [f"{month:02d}" for month in range(1, 13)]
 
 
@@ -716,8 +713,8 @@ class YFinancePrototypeScanner(tk.Tk):
         self.symbols_var = tk.StringVar(value=DEFAULT_SYMBOLS)
         self.period_var = tk.StringVar(value="2y")
         self.close_year_var = tk.StringVar(value=str(CURRENT_YEAR))
-        self.close_month_var = tk.StringVar(value=DEFAULT_MONTH)
-        self.close_day_var = tk.StringVar(value=DEFAULT_DAY)
+        self.close_month_var = tk.StringVar(value="")
+        self.close_day_var = tk.StringVar(value="")
         self.max_symbols_var = tk.StringVar(value="0")
         self.match_mode_var = tk.StringVar(value=MATCH_ANY)
         self.match_mode_display_var = tk.StringVar(value=localized_choice(self.lang, "match_mode", MATCH_ANY))
@@ -1104,8 +1101,10 @@ class YFinancePrototypeScanner(tk.Tk):
             "range_days": 100,
         }
         for column in DISPLAY_COLUMNS:
-            self.tree.heading(column, text=localized_column(self.lang, column), anchor="center")
-            self.tree.column(column, width=widths.get(column, 120), anchor="center", stretch=False)
+            self.tree.heading(column, text=localized_column(self.lang, column))
+            self.tree.column(column, width=widths.get(column, 120), anchor="e", stretch=False)
+        for column in ["symbol", "last_date", "matched_traits", "breakout_side"]:
+            self.tree.column(column, anchor="w")
         self.tree.tag_configure("gain", foreground=GAIN)
         self.tree.tag_configure("loss", foreground=LOSS)
         self.tree.tag_configure("neutral", foreground=MUTED)
@@ -1123,15 +1122,13 @@ class YFinancePrototypeScanner(tk.Tk):
         target_date = None
         raw_month = self.close_month_var.get().strip()
         raw_day = self.close_day_var.get().strip()
-        if bool(raw_month) != bool(raw_day):
-            raise ValueError(self._t("dlg_invalid_date_body"))
-        if not raw_month and not raw_day:
-            raw_month = DEFAULT_MONTH
-            raw_day = DEFAULT_DAY
-        try:
-            target_date = pd.Timestamp(f"{CURRENT_YEAR}-{raw_month}-{raw_day}")
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(self._t("dlg_invalid_date_body")) from exc
+        if raw_month or raw_day:
+            if not raw_month or not raw_day:
+                raise ValueError(self._t("dlg_invalid_date_body"))
+            try:
+                target_date = pd.Timestamp(f"{CURRENT_YEAR}-{raw_month}-{raw_day}")
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(self._t("dlg_invalid_date_body")) from exc
         return ScannerConfig(
             source_mode=self.source_mode_var.get(),
             symbols=symbols[:max_symbols] if max_symbols > 0 else symbols,

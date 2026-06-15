@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import csv
-import calendar
 import queue
 import threading
 import time
 import tkinter as tk
 import urllib.request
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -147,9 +145,7 @@ UI_TEXT = {
         "section_traits": "Traits",
         "field_source": "Source",
         "field_period": "Period",
-        "field_close_year": "Close Year",
-        "field_close_month": "Close Month",
-        "field_close_day": "Close Day",
+        "field_close_date": "Close Date",
         "field_max_symbols": "Max Symbols",
         "field_match_mode": "Match Mode",
         "field_mover_ratio": "Mover Ratio",
@@ -184,7 +180,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "Missing dependency",
         "dlg_missing_dep_body": "Install first:\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "Invalid input",
-        "dlg_invalid_date_body": "Choose both Close Month and Close Day, or leave both blank for today's date.",
+        "dlg_invalid_date_body": "Close Date must use YYYY-MM-DD format, or be left blank for latest.",
         "dlg_no_symbols_title": "No symbols",
         "dlg_no_symbols_body": "Enter at least one ticker symbol.",
         "err_no_symbols_to_scan": "No symbols to scan.",
@@ -205,9 +201,7 @@ UI_TEXT = {
         "section_traits": "技术特征",
         "field_source": "数据源",
         "field_period": "历史周期",
-        "field_close_year": "收盘年份",
-        "field_close_month": "收盘月份",
-        "field_close_day": "收盘日期",
+        "field_close_date": "收盘日期",
         "field_max_symbols": "最大股票数",
         "field_match_mode": "匹配方式",
         "field_mover_ratio": "量比",
@@ -242,7 +236,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "缺少依赖",
         "dlg_missing_dep_body": "请先安装：\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "输入无效",
-        "dlg_invalid_date_body": "请选择收盘月份和日期，或两项都留空使用今天日期。",
+        "dlg_invalid_date_body": "收盘日期必须使用 YYYY-MM-DD 格式，或留空使用最新日期。",
         "dlg_no_symbols_title": "没有股票代码",
         "dlg_no_symbols_body": "请至少输入一个股票代码。",
         "err_no_symbols_to_scan": "没有可扫描的股票代码。",
@@ -276,11 +270,6 @@ ACA, ABM, ABG, ACHC, GFI, PLTR, SMCI, SOFI, RIVN
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
-TODAY = date.today()
-CURRENT_YEAR = TODAY.year
-DEFAULT_MONTH = f"{TODAY.month:02d}"
-DEFAULT_DAY = f"{TODAY.day:02d}"
-MONTH_OPTIONS = [""] + [f"{month:02d}" for month in range(1, 13)]
 
 
 def localized_text(lang: str, key: str, **kwargs) -> str:
@@ -315,14 +304,6 @@ def localized_breakout_side(lang: str, value: str) -> str:
     if value == "Up":
         return "向上" if lang == LANG_ZH else "Up"
     return value
-
-
-def day_options_for(year: int, month_text: str) -> list[str]:
-    if not month_text:
-        return [""]
-    month = int(month_text)
-    _, last_day = calendar.monthrange(year, month)
-    return [""] + [f"{day:02d}" for day in range(1, last_day + 1)]
 
 
 @dataclass
@@ -715,9 +696,7 @@ class YFinancePrototypeScanner(tk.Tk):
         self.source_display_var = tk.StringVar(value=localized_choice(self.lang, "source", SOURCE_UNIVERSE))
         self.symbols_var = tk.StringVar(value=DEFAULT_SYMBOLS)
         self.period_var = tk.StringVar(value="2y")
-        self.close_year_var = tk.StringVar(value=str(CURRENT_YEAR))
-        self.close_month_var = tk.StringVar(value=DEFAULT_MONTH)
-        self.close_day_var = tk.StringVar(value=DEFAULT_DAY)
+        self.close_date_var = tk.StringVar(value="")
         self.max_symbols_var = tk.StringVar(value="0")
         self.match_mode_var = tk.StringVar(value=MATCH_ANY)
         self.match_mode_display_var = tk.StringVar(value=localized_choice(self.lang, "match_mode", MATCH_ANY))
@@ -766,18 +745,6 @@ class YFinancePrototypeScanner(tk.Tk):
     def _on_match_mode_selected(self, _event=None) -> None:
         self.match_mode_var.set(choice_from_label(self.lang, "match_mode", self.match_mode_display_var.get()))
 
-    def _on_close_month_selected(self, _event=None) -> None:
-        self._refresh_close_day_options()
-
-    def _refresh_close_day_options(self) -> None:
-        if not hasattr(self, "close_day_combo"):
-            return
-        year = int(self.close_year_var.get())
-        values = day_options_for(year, self.close_month_var.get())
-        if self.close_day_var.get() not in values:
-            self.close_day_var.set("")
-        self.close_day_combo.configure(values=values)
-
     def toggle_language(self) -> None:
         self.lang = LANG_ZH if self.lang == LANG_EN else LANG_EN
         self._apply_language()
@@ -798,11 +765,6 @@ class YFinancePrototypeScanner(tk.Tk):
             self.source_combo.configure(values=self._choice_values("source"))
         if hasattr(self, "match_mode_combo"):
             self.match_mode_combo.configure(values=self._choice_values("match_mode"))
-        if hasattr(self, "close_year_combo"):
-            self.close_year_combo.configure(values=[str(CURRENT_YEAR)])
-        if hasattr(self, "close_month_combo"):
-            self.close_month_combo.configure(values=MONTH_OPTIONS)
-            self._refresh_close_day_options()
         if hasattr(self, "tree"):
             for column in DISPLAY_COLUMNS:
                 self.tree.heading(column, text=localized_column(self.lang, column))
@@ -969,10 +931,7 @@ class YFinancePrototypeScanner(tk.Tk):
         row, self.source_combo = self._field(source, row, "field_source", self.source_display_var, self._choice_values("source"))
         self.source_combo.bind("<<ComboboxSelected>>", self._on_source_selected)
         row, _ = self._field(source, row, "field_period", self.period_var)
-        row, self.close_year_combo = self._field(source, row, "field_close_year", self.close_year_var, [str(CURRENT_YEAR)])
-        row, self.close_month_combo = self._field(source, row, "field_close_month", self.close_month_var, MONTH_OPTIONS)
-        self.close_month_combo.bind("<<ComboboxSelected>>", self._on_close_month_selected)
-        row, self.close_day_combo = self._field(source, row, "field_close_day", self.close_day_var, day_options_for(CURRENT_YEAR, self.close_month_var.get()))
+        row, _ = self._field(source, row, "field_close_date", self.close_date_var)
         row, _ = self._field(source, row, "field_max_symbols", self.max_symbols_var)
         _, self.match_mode_combo = self._field(source, row, "field_match_mode", self.match_mode_display_var, self._choice_values("match_mode"))
         self.match_mode_combo.bind("<<ComboboxSelected>>", self._on_match_mode_selected)
@@ -1104,8 +1063,10 @@ class YFinancePrototypeScanner(tk.Tk):
             "range_days": 100,
         }
         for column in DISPLAY_COLUMNS:
-            self.tree.heading(column, text=localized_column(self.lang, column), anchor="center")
-            self.tree.column(column, width=widths.get(column, 120), anchor="center", stretch=False)
+            self.tree.heading(column, text=localized_column(self.lang, column))
+            self.tree.column(column, width=widths.get(column, 120), anchor="e", stretch=False)
+        for column in ["symbol", "last_date", "matched_traits", "breakout_side"]:
+            self.tree.column(column, anchor="w")
         self.tree.tag_configure("gain", foreground=GAIN)
         self.tree.tag_configure("loss", foreground=LOSS)
         self.tree.tag_configure("neutral", foreground=MUTED)
@@ -1121,17 +1082,14 @@ class YFinancePrototypeScanner(tk.Tk):
         symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
         max_symbols = max(0, int(self.max_symbols_var.get()))
         target_date = None
-        raw_month = self.close_month_var.get().strip()
-        raw_day = self.close_day_var.get().strip()
-        if bool(raw_month) != bool(raw_day):
-            raise ValueError(self._t("dlg_invalid_date_body"))
-        if not raw_month and not raw_day:
-            raw_month = DEFAULT_MONTH
-            raw_day = DEFAULT_DAY
-        try:
-            target_date = pd.Timestamp(f"{CURRENT_YEAR}-{raw_month}-{raw_day}")
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(self._t("dlg_invalid_date_body")) from exc
+        raw_close_date = self.close_date_var.get().strip()
+        if raw_close_date:
+            try:
+                target_date = pd.Timestamp(raw_close_date)
+                if str(target_date.date()) != raw_close_date:
+                    raise ValueError
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(self._t("dlg_invalid_date_body")) from exc
         return ScannerConfig(
             source_mode=self.source_mode_var.get(),
             symbols=symbols[:max_symbols] if max_symbols > 0 else symbols,

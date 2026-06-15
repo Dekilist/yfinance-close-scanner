@@ -69,10 +69,6 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 
 - Leave `Source` as `U.S. Stock Universe` to load U.S. listed symbols from NASDAQ Trader symbol directories.
 - Use `Manual Symbols` if you only want to test a short list such as `AAPL, TSLA, NVDA`.
-- `Close Year` is set to the current year automatically.
-- `Close Month` and `Close Day` default to today's month and day.
-- If `Close Month` and `Close Day` are both blank, the scanner still defaults to today's date.
-- Choose `Close Month` and `Close Day` from the dropdowns to scan as of that close. If the selected date is not a trading day, the scanner uses the latest available trading bar on or before that date.
 - Set `Max Symbols` to `0` to scan the whole loaded universe, or use a smaller number while testing.
 - Adjust the V3 thresholds in the left sidebar.
 - Select one or more traits.

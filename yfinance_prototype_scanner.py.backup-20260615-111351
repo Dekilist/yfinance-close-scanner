@@ -1104,8 +1104,10 @@ class YFinancePrototypeScanner(tk.Tk):
             "range_days": 100,
         }
         for column in DISPLAY_COLUMNS:
-            self.tree.heading(column, text=localized_column(self.lang, column), anchor="center")
-            self.tree.column(column, width=widths.get(column, 120), anchor="center", stretch=False)
+            self.tree.heading(column, text=localized_column(self.lang, column))
+            self.tree.column(column, width=widths.get(column, 120), anchor="e", stretch=False)
+        for column in ["symbol", "last_date", "matched_traits", "breakout_side"]:
+            self.tree.column(column, anchor="w")
         self.tree.tag_configure("gain", foreground=GAIN)
         self.tree.tag_configure("loss", foreground=LOSS)
         self.tree.tag_configure("neutral", foreground=MUTED)
