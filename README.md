@@ -84,7 +84,9 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 - `News Range (Days)` is a dropdown with `1`, `3`, `5`, `7`, `14`, `30`, `60`, and `90` days. The default is `5`.
 - The range counts calendar dates inclusively from today. For example, selecting `5` includes today and the previous four dates. The completed status shows the exact start and end dates.
 - Use the category menu to show all news or one of the ten categories. Export follows the visible category filter.
-- Double-click a news row, or select it and click `Open Link`, to open the source article.
+- The visible `Main Idea / Summary` column uses Yahoo's article summary when available and falls back to the headline when Yahoo supplies no summary.
+- In English mode, headlines and summaries remain in their original language. In Chinese mode, both are translated into Simplified Chinese in a background thread and cached for the session. Switching back to English restores both originals immediately.
+- Double-click a news row, or select it and click `Open Article`, to open the hidden source URL.
 - Click `Export News CSV` to save the loaded news rows.
 - Use the `Chinese` / `English` language button to switch the interface language.
 
@@ -114,6 +116,7 @@ Important limitations:
 - The latest daily bar may be delayed, adjusted, incomplete, or unavailable.
 - Yahoo/yfinance can throttle requests, especially when scanning the full U.S. universe.
 - Yahoo/yfinance news coverage varies and does not guarantee complete or real-time coverage of any of the ten news categories.
+- Chinese headline and summary translation requires internet access and uses a public machine-translation endpoint. If that service is unavailable or rate-limited, the row displays a translation-unavailable notice with the original text.
 - Market cap can be missing for some symbols. The app has an `Allow missing market cap` option, but turning it on makes market-cap filters less strict.
 - Mover ratio is approximated as latest daily volume divided by the previous 20-day average volume. It is not Futu's real-time volume ratio.
 - Turnover is approximated as `Close * Volume`.

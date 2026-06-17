@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import calendar
+import json
 import queue
 import re
 import threading
 import time
 import tkinter as tk
+import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
@@ -74,7 +76,7 @@ NEWS_COLUMNS = [
     "category",
     "source",
     "headline",
-    "link",
+    "summary",
 ]
 
 NEWS_ALL = "all"
@@ -103,6 +105,7 @@ NEWS_CATEGORY_ORDER = [
 ]
 
 NEWS_DAY_RANGE_OPTIONS = ["1", "3", "5", "7", "14", "30", "60", "90"]
+SUMMARY_TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 
 NEWS_TOPIC_SEARCHES = {
     NEWS_TECH_EVENTS: [
@@ -263,7 +266,7 @@ NEWS_COLUMN_LABELS_BY_LANG = {
         "category": "Category",
         "source": "Source",
         "headline": "Headline",
-        "link": "Link",
+        "summary": "Main Idea / Summary",
     },
     LANG_ZH: {
         "symbol": "代码",
@@ -271,7 +274,7 @@ NEWS_COLUMN_LABELS_BY_LANG = {
         "category": "类别",
         "source": "来源",
         "headline": "标题",
-        "link": "链接",
+        "summary": "主要内容 / 摘要",
     },
 }
 
@@ -368,7 +371,7 @@ UI_TEXT = {
         "button_load_news": "Load News",
         "button_stop_news": "Stop News",
         "button_export_news": "Export News CSV",
-        "button_open_news": "Open Link",
+        "button_open_news": "Open Article",
         "tab_results": "Results",
         "tab_news": "News",
         "results_title": "Results",
@@ -384,6 +387,9 @@ UI_TEXT = {
         "news_status_loading": "Loading {symbol} ({checked}/{total})...",
         "news_status_done": "Done. {count} news items from {start_date} to {end_date}.",
         "news_status_stopping": "Stopping news load...",
+        "news_status_translating": "Translating titles and summaries ({done}/{total})...",
+        "summary_translating": "Translating...",
+        "summary_translation_failed": "Translation unavailable: {text}",
         "status_preparing": "Preparing symbols...",
         "status_stopping": "Stopping after the current request...",
         "status_loading_universe": "Loading U.S. stock universe from NASDAQ Trader...",
@@ -406,8 +412,8 @@ UI_TEXT = {
         "dlg_no_news_symbols_body": "Run a scan first or enter manual symbols.",
         "dlg_no_news_title": "No news",
         "dlg_no_news_body": "Load news first.",
-        "dlg_no_news_link_title": "No link",
-        "dlg_no_news_link_body": "Select a news row with a link.",
+        "dlg_no_news_link_title": "No article",
+        "dlg_no_news_link_body": "Select a news row that has a source article.",
         "export_title": "Export yfinance prototype results",
         "news_export_title": "Export yfinance news results",
         "dlg_exported_title": "Exported",
@@ -450,7 +456,7 @@ UI_TEXT = {
         "button_load_news": "加载新闻",
         "button_stop_news": "停止新闻",
         "button_export_news": "导出新闻CSV",
-        "button_open_news": "打开链接",
+        "button_open_news": "打开原文",
         "tab_results": "扫描结果",
         "tab_news": "新闻",
         "results_title": "扫描结果",
@@ -466,6 +472,9 @@ UI_TEXT = {
         "news_status_loading": "正在加载 {symbol} ({checked}/{total})...",
         "news_status_done": "完成，{start_date} 至 {end_date} 共 {count} 条新闻。",
         "news_status_stopping": "正在停止新闻加载...",
+        "news_status_translating": "正在翻译标题和摘要（{done}/{total}）...",
+        "summary_translating": "正在翻译...",
+        "summary_translation_failed": "翻译暂不可用：{text}",
         "status_preparing": "正在准备股票代码...",
         "status_stopping": "将在当前请求结束后停止...",
         "status_loading_universe": "正在从 NASDAQ Trader 加载美股股票池...",
@@ -488,8 +497,8 @@ UI_TEXT = {
         "dlg_no_news_symbols_body": "请先运行扫描，或输入手动股票代码。",
         "dlg_no_news_title": "没有新闻",
         "dlg_no_news_body": "请先加载新闻。",
-        "dlg_no_news_link_title": "没有链接",
-        "dlg_no_news_link_body": "请选择带有链接的新闻行。",
+        "dlg_no_news_link_title": "没有原文",
+        "dlg_no_news_link_body": "请选择带有原文来源的新闻行。",
         "export_title": "导出 yfinance 扫描结果",
         "news_export_title": "导出 yfinance 新闻结果",
         "dlg_exported_title": "已导出",
@@ -825,6 +834,50 @@ def format_news_time(value) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
+def news_main_idea(title: str, summary: str, max_length: int = 320) -> str:
+    text = summary.strip() or title.strip()
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_length:
+        return text
+    shortened = text[: max_length - 3].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return f"{shortened}..."
+
+
+def parse_translation_response(payload) -> str:
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
+        return ""
+    parts = []
+    for segment in payload[0]:
+        if isinstance(segment, list) and segment and isinstance(segment[0], str):
+            parts.append(segment[0])
+    return "".join(parts).strip()
+
+
+def translate_summary_to_chinese(text: str) -> str:
+    if not text.strip():
+        return ""
+    query = urllib.parse.urlencode(
+        {
+            "client": "gtx",
+            "sl": "auto",
+            "tl": "zh-CN",
+            "dt": "t",
+            "q": text,
+        }
+    )
+    request = urllib.request.Request(
+        f"{SUMMARY_TRANSLATE_URL}?{query}",
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return ""
+    return parse_translation_response(payload)
+
+
 def extract_news_row(symbol: str, item: dict, category: str | None = None) -> dict:
     content = item.get("content") if isinstance(item, dict) else None
     if isinstance(content, dict):
@@ -841,13 +894,15 @@ def extract_news_row(symbol: str, item: dict, category: str | None = None) -> di
         source = item.get("publisher", "") if isinstance(item, dict) else ""
         link = item.get("link", "") if isinstance(item, dict) else ""
         published = item.get("providerPublishTime") if isinstance(item, dict) else ""
+    headline = title or summary or "(no headline)"
     text = f"{title} {summary}".strip()
     return {
         "symbol": symbol,
         "time": format_news_time(published),
         "category": category or classify_news(text),
         "source": source or "",
-        "headline": title or summary or "(no headline)",
+        "headline": headline,
+        "summary": news_main_idea(headline, summary),
         "link": link or "",
         "_published_ts": news_timestamp(published),
         "_news_id": item.get("uuid", "") if isinstance(item, dict) else "",
@@ -1155,11 +1210,16 @@ class YFinancePrototypeScanner(tk.Tk):
 
         self.results: list[dict] = []
         self.news_results: list[dict] = []
+        self.news_item_links: dict[str, str] = {}
+        self.summary_translations: dict[str, str] = {}
+        self.summary_translation_failures: set[str] = set()
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self.stop_event = threading.Event()
         self.news_stop_event = threading.Event()
+        self.summary_translation_stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.news_worker: threading.Thread | None = None
+        self.summary_translation_worker: threading.Thread | None = None
         self.lang = LANG_EN
         self.label_widgets: dict[str, ttk.Label] = {}
         self.button_widgets: dict[str, ttk.Button] = {}
@@ -1236,6 +1296,7 @@ class YFinancePrototypeScanner(tk.Tk):
                 self.news_filter_key = key
                 break
         self.refresh_news_table()
+        self.start_summary_translation()
 
     def _on_close_month_selected(self, _event=None) -> None:
         self._refresh_close_day_options()
@@ -1293,11 +1354,12 @@ class YFinancePrototypeScanner(tk.Tk):
         if hasattr(self, "status_var") and not (self.worker and self.worker.is_alive()):
             self.status_var.set(self._t("status_ready"))
         if hasattr(self, "news_status_var") and not (self.news_worker and self.news_worker.is_alive()):
-            self.news_status_var.set(self._t("news_status_ready"))
+            self.news_status_var.set(self._news_done_status() if self.news_results else self._t("news_status_ready"))
         if self.results and hasattr(self, "tree"):
             self.refresh_table()
         if self.news_results and hasattr(self, "news_tree"):
             self.refresh_news_table()
+            self.start_summary_translation()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
@@ -1712,8 +1774,8 @@ class YFinancePrototypeScanner(tk.Tk):
             "time": 150,
             "category": 150,
             "source": 150,
-            "headline": 560,
-            "link": 320,
+            "headline": 430,
+            "summary": 560,
         }
         for column in NEWS_COLUMNS:
             self.news_tree.heading(column, text=localized_news_column(self.lang, column), anchor="center")
@@ -1870,15 +1932,24 @@ class YFinancePrototypeScanner(tk.Tk):
                     self.news_results = list(payload)
                     self.refresh_news_table()
                 elif kind == "news_done":
-                    self.news_status_var.set(
-                        self._t(
-                            "news_status_done",
-                            count=len(self.news_results),
-                            start_date=self.news_range_start.isoformat(),
-                            end_date=self.news_range_end.isoformat(),
-                        )
-                    )
+                    self.news_status_var.set(self._news_done_status())
                     self.news_finished()
+                    self.start_summary_translation()
+                elif kind == "summary_translation":
+                    text, translated, failed, done, total = payload
+                    if translated:
+                        self.summary_translations[str(text)] = str(translated)
+                    if failed:
+                        self.summary_translation_failures.add(str(text))
+                    if self.lang == LANG_ZH:
+                        self.news_status_var.set(self._t("news_status_translating", done=done, total=total))
+                        self.refresh_news_table()
+                elif kind == "summary_translation_done":
+                    self.summary_translation_worker = None
+                    if self.lang == LANG_ZH:
+                        self.refresh_news_table()
+                        self.news_status_var.set(self._news_done_status())
+                    self.start_summary_translation()
         except queue.Empty:
             pass
         self.after(100, self._poll_messages)
@@ -1897,6 +1968,14 @@ class YFinancePrototypeScanner(tk.Tk):
         symbols = [symbol for symbol in dict.fromkeys(symbols) if symbol]
         return symbols[:max_symbols]
 
+    def _news_done_status(self) -> str:
+        return self._t(
+            "news_status_done",
+            count=len(self.news_results),
+            start_date=self.news_range_start.isoformat(),
+            end_date=self.news_range_end.isoformat(),
+        )
+
     def start_news_load(self) -> None:
         if yf is None:
             messagebox.showerror(self._t("dlg_missing_dep_title"), self._t("dlg_missing_dep_body"))
@@ -1910,6 +1989,7 @@ class YFinancePrototypeScanner(tk.Tk):
             return
         self.news_range_start, self.news_range_end = news_date_range(recent_days)
         symbols = self.news_symbols(max_symbols)
+        self.summary_translation_stop_event.set()
         self.news_results.clear()
         self.clear_news_table()
         self.news_count_var.set(self._t("count_news", count=0))
@@ -1953,6 +2033,57 @@ class YFinancePrototypeScanner(tk.Tk):
         self.stop_news_button.configure(state="disabled")
         self.news_stop_event.clear()
 
+    def start_summary_translation(self) -> None:
+        if self.lang != LANG_ZH or not self.news_results:
+            return
+        if self.news_worker and self.news_worker.is_alive():
+            return
+        if self.summary_translation_worker and self.summary_translation_worker.is_alive():
+            return
+        texts: list[str] = []
+        for row in self.filtered_news_results():
+            for field in ("headline", "summary"):
+                text = str(row.get(field, "")).strip()
+                if not text or text in self.summary_translations or text in self.summary_translation_failures:
+                    continue
+                if re.search(r"[\u4e00-\u9fff]", text):
+                    self.summary_translations[text] = text
+                    continue
+                if text not in texts:
+                    texts.append(text)
+        if not texts:
+            self.refresh_news_table()
+            return
+        self.summary_translation_stop_event.clear()
+        self.news_status_var.set(self._t("news_status_translating", done=0, total=len(texts)))
+        self.summary_translation_worker = threading.Thread(
+            target=self.translate_summary_worker,
+            args=(texts,),
+            daemon=True,
+        )
+        self.summary_translation_worker.start()
+
+    def translate_summary_worker(self, texts: list[str]) -> None:
+        total = len(texts)
+        for index, text in enumerate(texts, start=1):
+            if self.summary_translation_stop_event.is_set():
+                break
+            translated = translate_summary_to_chinese(text)
+            self.messages.put(("summary_translation", (text, translated, not translated, index, total)))
+            time.sleep(0.05)
+        self.messages.put(("summary_translation_done", None))
+
+    def localized_news_text(self, value, pending_placeholder: bool = True) -> str:
+        original = str(value or "")
+        if self.lang != LANG_ZH or not original:
+            return original
+        translated = self.summary_translations.get(original)
+        if translated:
+            return translated
+        if original in self.summary_translation_failures:
+            return self._t("summary_translation_failed", text=original)
+        return self._t("summary_translating") if pending_placeholder else original
+
     def refresh_news_table(self) -> None:
         self.clear_news_table()
         visible_rows = self.filtered_news_results()
@@ -1963,10 +2094,13 @@ class YFinancePrototypeScanner(tk.Tk):
                 value = row.get(column, "")
                 if column == "category":
                     values.append(localized_news_category(self.lang, str(value)))
+                elif column in {"headline", "summary"}:
+                    values.append(self.localized_news_text(value))
                 else:
                     values.append(str(value))
             tags = ("odd",) if index % 2 else ()
-            self.news_tree.insert("", "end", values=values, tags=tags)
+            item_id = self.news_tree.insert("", "end", values=values, tags=tags)
+            self.news_item_links[item_id] = str(row.get("link", "") or "")
 
     def filtered_news_results(self) -> list[dict]:
         if self.news_filter_key == NEWS_ALL:
@@ -1976,16 +2110,13 @@ class YFinancePrototypeScanner(tk.Tk):
     def clear_news_table(self) -> None:
         for item in self.news_tree.get_children():
             self.news_tree.delete(item)
+        self.news_item_links.clear()
 
     def selected_news_link(self) -> str:
         selection = self.news_tree.selection()
         if not selection:
             return ""
-        values = self.news_tree.item(selection[0], "values")
-        if not values or len(values) < len(NEWS_COLUMNS):
-            return ""
-        link_index = NEWS_COLUMNS.index("link")
-        return str(values[link_index] or "")
+        return self.news_item_links.get(selection[0], "")
 
     def open_selected_news_link(self) -> None:
         link = self.selected_news_link()
@@ -2013,6 +2144,8 @@ class YFinancePrototypeScanner(tk.Tk):
             for row in visible_rows:
                 output = {column: row.get(column, "") for column in NEWS_COLUMNS}
                 output["category"] = localized_news_category(self.lang, str(output.get("category", "")))
+                output["headline"] = self.localized_news_text(row.get("headline", ""), pending_placeholder=False)
+                output["summary"] = self.localized_news_text(row.get("summary", ""), pending_placeholder=False)
                 writer.writerow(output)
         messagebox.showinfo(self._t("dlg_exported_title"), self._t("dlg_exported_body", count=len(visible_rows)))
 
