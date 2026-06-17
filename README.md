@@ -78,7 +78,22 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 - Select one or more traits.
 - Click `Run Scan`.
 - Click `Export CSV` after a scan to save the current results.
+- Open the `News` tab after a scan to load recent Yahoo/yfinance news for the matched symbols.
+- If there are no scan results yet, the `News` tab uses the manually entered symbols instead.
+- Double-click a news row, or select it and click `Open Link`, to open the source article.
+- Click `Export News CSV` to save the loaded news rows.
 - Use the `Chinese` / `English` language button to switch the interface language.
+
+## News Tab
+
+The `News` tab is designed as a quick risk and catalyst companion to the scanner results. It loads recent Yahoo/yfinance news for the selected symbols and classifies headlines into practical buckets:
+
+- `Insider/Executive`: examples include insider sales, senior executive stock sales, Form 4-style wording, CEO/CFO/director headlines.
+- `Incident/Risk`: examples include outages, cyber incidents, recalls, accidents, shutdowns, crashes, and other operational events.
+- `Legal/Investigation`: lawsuits, settlements, SEC/DOJ/regulator probes, fraud, antitrust, and similar risk items.
+- `Earnings/Guidance`, `Deal/M&A`, `Analyst/Rating`, `Macro/Policy`, and `General`.
+
+The categories are keyword-based helpers, not legal or financial conclusions. Yahoo/yfinance news may miss SEC filings, insider transactions, local incidents, paywalled articles, or smaller-company updates. For complete insider sale monitoring, add a licensed SEC/Form 4 or corporate-actions data source later.
 
 ## Data Notes
 
@@ -88,6 +103,7 @@ Important limitations:
 
 - The latest daily bar may be delayed, adjusted, incomplete, or unavailable.
 - Yahoo/yfinance can throttle requests, especially when scanning the full U.S. universe.
+- Yahoo/yfinance news coverage varies by symbol and does not guarantee complete recent news or insider-transaction coverage.
 - Market cap can be missing for some symbols. The app has an `Allow missing market cap` option, but turning it on makes market-cap filters less strict.
 - Mover ratio is approximated as latest daily volume divided by the previous 20-day average volume. It is not Futu's real-time volume ratio.
 - Turnover is approximated as `Close * Volume`.

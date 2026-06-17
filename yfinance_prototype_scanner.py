@@ -7,8 +7,9 @@ import threading
 import time
 import tkinter as tk
 import urllib.request
+import webbrowser
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -66,6 +67,15 @@ DISPLAY_COLUMNS = [
     "range_days",
 ]
 
+NEWS_COLUMNS = [
+    "symbol",
+    "time",
+    "category",
+    "source",
+    "headline",
+    "link",
+]
+
 COLUMN_LABELS_BY_LANG = {
     LANG_EN: {
         "symbol": "Symbol",
@@ -109,6 +119,48 @@ COLUMN_LABELS_BY_LANG = {
     },
 }
 COLUMN_LABELS = COLUMN_LABELS_BY_LANG[LANG_EN]
+
+NEWS_COLUMN_LABELS_BY_LANG = {
+    LANG_EN: {
+        "symbol": "Symbol",
+        "time": "Time",
+        "category": "Category",
+        "source": "Source",
+        "headline": "Headline",
+        "link": "Link",
+    },
+    LANG_ZH: {
+        "symbol": "代码",
+        "time": "时间",
+        "category": "类别",
+        "source": "来源",
+        "headline": "标题",
+        "link": "链接",
+    },
+}
+
+NEWS_CATEGORY_LABELS_BY_LANG = {
+    LANG_EN: {
+        "insider": "Insider/Executive",
+        "incident": "Incident/Risk",
+        "legal": "Legal/Investigation",
+        "earnings": "Earnings/Guidance",
+        "deal": "Deal/M&A",
+        "analyst": "Analyst/Rating",
+        "macro": "Macro/Policy",
+        "general": "General",
+    },
+    LANG_ZH: {
+        "insider": "高管/内部人",
+        "incident": "事件/风险",
+        "legal": "法律/调查",
+        "earnings": "财报/指引",
+        "deal": "交易/并购",
+        "analyst": "分析师/评级",
+        "macro": "宏观/政策",
+        "general": "一般新闻",
+    },
+}
 
 SOURCE_UNIVERSE = "U.S. Stock Universe"
 SOURCE_MANUAL = "Manual Symbols"
@@ -171,9 +223,23 @@ UI_TEXT = {
         "button_stop": "Stop",
         "button_export": "Export CSV",
         "button_language": "中文",
+        "button_load_news": "Load News",
+        "button_stop_news": "Stop News",
+        "button_export_news": "Export News CSV",
+        "button_open_news": "Open Link",
+        "tab_results": "Results",
+        "tab_news": "News",
         "results_title": "Results",
+        "news_title": "News",
+        "field_news_max_symbols": "News Max Symbols",
+        "field_news_items": "Items / Symbol",
         "count_matches": "{count} matches",
+        "count_news": "{count} news items",
         "status_ready": "Ready to scan.",
+        "news_status_ready": "Ready to load news.",
+        "news_status_loading": "Loading news for {symbol} ({checked}/{total})...",
+        "news_status_done": "Done. {count} news items.",
+        "news_status_stopping": "Stopping news load...",
         "status_preparing": "Preparing symbols...",
         "status_stopping": "Stopping after the current request...",
         "status_loading_universe": "Loading U.S. stock universe from NASDAQ Trader...",
@@ -184,6 +250,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "Missing dependency",
         "dlg_missing_dep_body": "Install first:\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "Invalid input",
+        "dlg_invalid_number_body": "News Max Symbols and Items / Symbol must be whole numbers.",
         "dlg_invalid_date_body": "Choose both Close Month and Close Day, or leave both blank for today's date.",
         "dlg_no_symbols_title": "No symbols",
         "dlg_no_symbols_body": "Enter at least one ticker symbol.",
@@ -191,7 +258,14 @@ UI_TEXT = {
         "dlg_scan_failed_title": "Scan failed",
         "dlg_no_results_title": "No results",
         "dlg_no_results_body": "Run a scan first.",
+        "dlg_no_news_symbols_title": "No symbols",
+        "dlg_no_news_symbols_body": "Run a scan first or enter manual symbols.",
+        "dlg_no_news_title": "No news",
+        "dlg_no_news_body": "Load news first.",
+        "dlg_no_news_link_title": "No link",
+        "dlg_no_news_link_body": "Select a news row with a link.",
         "export_title": "Export yfinance prototype results",
+        "news_export_title": "Export yfinance news results",
         "dlg_exported_title": "Exported",
         "dlg_exported_body": "Saved {count} rows.",
     },
@@ -229,9 +303,23 @@ UI_TEXT = {
         "button_stop": "停止",
         "button_export": "导出CSV",
         "button_language": "English",
+        "button_load_news": "加载新闻",
+        "button_stop_news": "停止新闻",
+        "button_export_news": "导出新闻CSV",
+        "button_open_news": "打开链接",
+        "tab_results": "扫描结果",
+        "tab_news": "新闻",
         "results_title": "扫描结果",
+        "news_title": "新闻",
+        "field_news_max_symbols": "新闻股票数",
+        "field_news_items": "每股新闻数",
         "count_matches": "共 {count} 个结果",
+        "count_news": "共 {count} 条新闻",
         "status_ready": "准备扫描。",
+        "news_status_ready": "准备加载新闻。",
+        "news_status_loading": "正在加载 {symbol} 新闻 ({checked}/{total})...",
+        "news_status_done": "完成，共 {count} 条新闻。",
+        "news_status_stopping": "正在停止新闻加载...",
         "status_preparing": "正在准备股票代码...",
         "status_stopping": "将在当前请求结束后停止...",
         "status_loading_universe": "正在从 NASDAQ Trader 加载美股股票池...",
@@ -242,6 +330,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "缺少依赖",
         "dlg_missing_dep_body": "请先安装：\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "输入无效",
+        "dlg_invalid_number_body": "新闻股票数和每股新闻数必须是整数。",
         "dlg_invalid_date_body": "请选择收盘月份和日期，或两项都留空使用今天日期。",
         "dlg_no_symbols_title": "没有股票代码",
         "dlg_no_symbols_body": "请至少输入一个股票代码。",
@@ -249,7 +338,14 @@ UI_TEXT = {
         "dlg_scan_failed_title": "扫描失败",
         "dlg_no_results_title": "没有结果",
         "dlg_no_results_body": "请先运行扫描。",
+        "dlg_no_news_symbols_title": "没有股票代码",
+        "dlg_no_news_symbols_body": "请先运行扫描，或输入手动股票代码。",
+        "dlg_no_news_title": "没有新闻",
+        "dlg_no_news_body": "请先加载新闻。",
+        "dlg_no_news_link_title": "没有链接",
+        "dlg_no_news_link_body": "请选择带有链接的新闻行。",
         "export_title": "导出 yfinance 扫描结果",
+        "news_export_title": "导出 yfinance 新闻结果",
         "dlg_exported_title": "已导出",
         "dlg_exported_body": "已保存 {count} 行。",
     },
@@ -294,6 +390,14 @@ def localized_trait(lang: str, key: str) -> str:
 
 def localized_column(lang: str, key: str) -> str:
     return COLUMN_LABELS_BY_LANG.get(lang, COLUMN_LABELS_BY_LANG[LANG_EN]).get(key, key)
+
+
+def localized_news_column(lang: str, key: str) -> str:
+    return NEWS_COLUMN_LABELS_BY_LANG.get(lang, NEWS_COLUMN_LABELS_BY_LANG[LANG_EN]).get(key, key)
+
+
+def localized_news_category(lang: str, key: str) -> str:
+    return NEWS_CATEGORY_LABELS_BY_LANG.get(lang, NEWS_CATEGORY_LABELS_BY_LANG[LANG_EN]).get(key, key)
 
 
 def localized_choice(lang: str, group: str, key: str) -> str:
@@ -493,6 +597,72 @@ def history_as_of_date(daily, target_date):
     if getattr(dates, "tz", None) is not None:
         dates = dates.tz_localize(None)
     return daily.loc[dates.normalize() <= target.normalize()]
+
+
+def classify_news(text: str) -> str:
+    lowered = text.lower()
+    keyword_groups = [
+        ("insider", ["insider", "executive", "ceo", "cfo", "chairman", "director", "sold shares", "sells shares", "stock sale", "form 4"]),
+        ("incident", ["incident", "outage", "cyber", "hack", "breach", "fire", "explosion", "crash", "recall", "accident", "shutdown"]),
+        ("legal", ["lawsuit", "sues", "settlement", "investigation", "probe", "sec", "doj", "fraud", "antitrust", "regulator"]),
+        ("earnings", ["earnings", "revenue", "profit", "loss", "guidance", "forecast", "results", "quarter"]),
+        ("deal", ["acquire", "acquisition", "merger", "buyout", "takeover", "deal", "stake", "partnership"]),
+        ("analyst", ["analyst", "rating", "upgrade", "downgrade", "price target", "initiates", "maintains"]),
+        ("macro", ["fed", "inflation", "tariff", "rate cut", "rate hike", "policy", "china", "oil prices"]),
+    ]
+    for category, keywords in keyword_groups:
+        if any(keyword in lowered for keyword in keywords):
+            return category
+    return "general"
+
+
+def format_news_time(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return text[:19]
+
+
+def extract_news_row(symbol: str, item: dict) -> dict:
+    content = item.get("content") if isinstance(item, dict) else None
+    if isinstance(content, dict):
+        title = content.get("title") or ""
+        summary = content.get("summary") or ""
+        provider = content.get("provider") or {}
+        source = provider.get("displayName") if isinstance(provider, dict) else str(provider)
+        link_data = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+        link = link_data.get("url") if isinstance(link_data, dict) else str(link_data or "")
+        published = content.get("pubDate") or content.get("displayTime")
+    else:
+        title = item.get("title", "") if isinstance(item, dict) else ""
+        summary = item.get("summary", "") if isinstance(item, dict) else ""
+        source = item.get("publisher", "") if isinstance(item, dict) else ""
+        link = item.get("link", "") if isinstance(item, dict) else ""
+        published = item.get("providerPublishTime") if isinstance(item, dict) else ""
+    return {
+        "symbol": symbol,
+        "time": format_news_time(published),
+        "category": classify_news(f"{title} {summary}"),
+        "source": source or "",
+        "headline": title or summary or "(no headline)",
+        "link": link or "",
+    }
+
+
+def fetch_symbol_news(symbol: str, limit: int) -> list[dict]:
+    if yf is None:
+        return []
+    try:
+        raw_items = yf.Ticker(symbol).news or []
+    except Exception:
+        return []
+    rows = [extract_news_row(symbol, item) for item in raw_items[:limit]]
+    return [row for row in rows if row.get("headline")]
 
 
 def get_symbol_frame(raw, symbol: str, symbol_count: int):
@@ -703,9 +873,12 @@ class YFinancePrototypeScanner(tk.Tk):
         self.configure(bg=APP_BG)
 
         self.results: list[dict] = []
+        self.news_results: list[dict] = []
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self.stop_event = threading.Event()
+        self.news_stop_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self.news_worker: threading.Thread | None = None
         self.lang = LANG_EN
         self.label_widgets: dict[str, ttk.Label] = {}
         self.button_widgets: dict[str, ttk.Button] = {}
@@ -736,6 +909,8 @@ class YFinancePrototypeScanner(tk.Tk):
         self.box_width_pct_var = tk.StringVar(value="15")
         self.min_breakout_turnover_var = tk.StringVar(value="30000000")
         self.breakout_turnover_multiple_var = tk.StringVar(value="1.5")
+        self.news_max_symbols_var = tk.StringVar(value="25")
+        self.news_items_per_symbol_var = tk.StringVar(value="5")
 
         self.trait_vars = {
             TRAIT_MOVER: tk.BooleanVar(value=True),
@@ -806,12 +981,24 @@ class YFinancePrototypeScanner(tk.Tk):
         if hasattr(self, "tree"):
             for column in DISPLAY_COLUMNS:
                 self.tree.heading(column, text=localized_column(self.lang, column))
+        if hasattr(self, "news_tree"):
+            for column in NEWS_COLUMNS:
+                self.news_tree.heading(column, text=localized_news_column(self.lang, column))
+        if hasattr(self, "right_notebook"):
+            self.right_notebook.tab(self.results_tab, text=self._t("tab_results"))
+            self.right_notebook.tab(self.news_tab, text=self._t("tab_news"))
         if hasattr(self, "result_count_var"):
             self._set_result_count()
+        if hasattr(self, "news_count_var"):
+            self.news_count_var.set(self._t("count_news", count=len(self.news_results)))
         if hasattr(self, "status_var") and not (self.worker and self.worker.is_alive()):
             self.status_var.set(self._t("status_ready"))
+        if hasattr(self, "news_status_var") and not (self.news_worker and self.news_worker.is_alive()):
+            self.news_status_var.set(self._t("news_status_ready"))
         if self.results and hasattr(self, "tree"):
             self.refresh_table()
+        if self.news_results and hasattr(self, "news_tree"):
+            self.refresh_news_table()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
@@ -828,6 +1015,9 @@ class YFinancePrototypeScanner(tk.Tk):
         style.configure("Section.TFrame", background=CARD_BG, borderwidth=1, relief="solid", bordercolor=BORDER)
         style.configure("Table.TFrame", background=APP_BG)
         style.configure("Toolbar.TFrame", background=PANEL_BG)
+        style.configure("TNotebook", background=APP_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background="#ffffff", foreground=MUTED, padding=(16, 8), borderwidth=1, font=(font_family, 10, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", CARD_BG), ("active", "#f2f2f7")], foreground=[("selected", TEXT), ("active", TEXT)])
         style.configure("TLabel", background=APP_BG, foreground=TEXT)
         style.configure("Title.TLabel", background=PANEL_BG, foreground=TEXT, font=(display_family, 17, "bold"))
         style.configure("Subtitle.TLabel", background=PANEL_BG, foreground=MUTED, font=(font_family, 9))
@@ -1078,8 +1268,19 @@ class YFinancePrototypeScanner(tk.Tk):
         self.progress = ttk.Progressbar(status, mode="indeterminate", style="Modern.Horizontal.TProgressbar")
         self.progress.grid(row=0, column=1, sticky="ew", padx=(14, 0))
 
-        table_frame = ttk.Frame(right, style="Table.TFrame")
-        table_frame.grid(row=2, column=0, sticky="nsew")
+        self.right_notebook = ttk.Notebook(right)
+        self.right_notebook.grid(row=2, column=0, sticky="nsew")
+        self.results_tab = ttk.Frame(self.right_notebook, style="Content.TFrame", padding=(0, 8, 0, 0))
+        self.news_tab = ttk.Frame(self.right_notebook, style="Content.TFrame", padding=(0, 8, 0, 0))
+        self.right_notebook.add(self.results_tab, text=self._t("tab_results"))
+        self.right_notebook.add(self.news_tab, text=self._t("tab_news"))
+        self.results_tab.rowconfigure(0, weight=1)
+        self.results_tab.columnconfigure(0, weight=1)
+        self.news_tab.rowconfigure(2, weight=1)
+        self.news_tab.columnconfigure(0, weight=1)
+
+        table_frame = ttk.Frame(self.results_tab, style="Table.TFrame")
+        table_frame.grid(row=0, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
         self.tree = ttk.Treeview(table_frame, columns=DISPLAY_COLUMNS, show="headings")
@@ -1116,6 +1317,89 @@ class YFinancePrototypeScanner(tk.Tk):
         x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview, style="Horizontal.TScrollbar")
         x_scroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        self._build_news_tab(self.news_tab)
+
+    def _build_news_tab(self, parent: ttk.Frame) -> None:
+        header = ttk.Frame(parent, style="Content.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        header.columnconfigure(0, weight=1)
+        news_title = ttk.Label(header, text=self._t("news_title"), style="PageTitle.TLabel")
+        news_title.grid(row=0, column=0, sticky="w")
+        self.label_widgets["news_title"] = news_title
+        self.news_count_var = tk.StringVar(value=self._t("count_news", count=0))
+        ttk.Label(header, textvariable=self.news_count_var, style="Badge.TLabel").grid(row=0, column=1, sticky="e")
+
+        controls = ttk.Frame(parent, style="Section.TFrame", padding=(16, 14))
+        controls.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        controls.columnconfigure(5, weight=1)
+        self._compact_field(controls, 0, "field_news_max_symbols", self.news_max_symbols_var, width=8)
+        self._compact_field(controls, 2, "field_news_items", self.news_items_per_symbol_var, width=8)
+
+        self.load_news_button = ttk.Button(
+            controls,
+            text=self._t("button_load_news"),
+            command=self.start_news_load,
+            style="Accent.TButton",
+        )
+        self.load_news_button.grid(row=0, column=4, sticky="ew", padx=(12, 6))
+        self.button_widgets["button_load_news"] = self.load_news_button
+        self.stop_news_button = ttk.Button(
+            controls,
+            text=self._t("button_stop_news"),
+            command=self.stop_news_load,
+            state="disabled",
+            style="Quiet.TButton",
+        )
+        self.stop_news_button.grid(row=0, column=5, sticky="ew", padx=6)
+        self.button_widgets["button_stop_news"] = self.stop_news_button
+        export_news_button = ttk.Button(controls, text=self._t("button_export_news"), command=self.export_news_csv)
+        export_news_button.grid(row=0, column=6, sticky="ew", padx=6)
+        self.button_widgets["button_export_news"] = export_news_button
+        open_news_button = ttk.Button(controls, text=self._t("button_open_news"), command=self.open_selected_news_link)
+        open_news_button.grid(row=0, column=7, sticky="ew", padx=(6, 0))
+        self.button_widgets["button_open_news"] = open_news_button
+
+        self.news_status_var = tk.StringVar(value=self._t("news_status_ready"))
+        ttk.Label(controls, textvariable=self.news_status_var, style="SectionSubtle.TLabel").grid(
+            row=1,
+            column=0,
+            columnspan=8,
+            sticky="ew",
+            pady=(12, 0),
+        )
+
+        table_frame = ttk.Frame(parent, style="Table.TFrame")
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        self.news_tree = ttk.Treeview(table_frame, columns=NEWS_COLUMNS, show="headings")
+        widths = {
+            "symbol": 90,
+            "time": 150,
+            "category": 150,
+            "source": 150,
+            "headline": 560,
+            "link": 320,
+        }
+        for column in NEWS_COLUMNS:
+            self.news_tree.heading(column, text=localized_news_column(self.lang, column), anchor="center")
+            self.news_tree.column(column, width=widths.get(column, 130), anchor="center", stretch=False)
+        self.news_tree.tag_configure("odd", background="#fbfbfd")
+        self.news_tree.grid(row=0, column=0, sticky="nsew")
+        self.news_tree.bind("<Double-1>", lambda _event: self.open_selected_news_link())
+        y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.news_tree.yview, style="Vertical.TScrollbar")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.news_tree.xview, style="Horizontal.TScrollbar")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        self.news_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+
+    def _compact_field(self, parent: ttk.Frame, column: int, label_key: str, variable: tk.Variable, width: int = 10) -> ttk.Entry:
+        label = ttk.Label(parent, text=self._t(label_key), style="FieldLabel.TLabel")
+        label.grid(row=0, column=column, sticky="w", padx=(0, 8))
+        self.label_widgets[label_key] = label
+        entry = ttk.Entry(parent, textvariable=variable, width=width, style="Modern.TEntry", justify="center")
+        entry.grid(row=0, column=column + 1, sticky="w", padx=(0, 10))
+        return entry
 
     def read_config(self) -> ScannerConfig:
         symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
@@ -1254,6 +1538,14 @@ class YFinancePrototypeScanner(tk.Tk):
                 elif kind == "done":
                     self.status_var.set(self._t("status_done", count=len(self.results)))
                     self.scan_finished()
+                elif kind == "news_status":
+                    self.news_status_var.set(str(payload))
+                elif kind == "news_rows":
+                    self.news_results = list(payload)
+                    self.refresh_news_table()
+                elif kind == "news_done":
+                    self.news_status_var.set(self._t("news_status_done", count=len(self.news_results)))
+                    self.news_finished()
         except queue.Empty:
             pass
         self.after(100, self._poll_messages)
@@ -1263,6 +1555,115 @@ class YFinancePrototypeScanner(tk.Tk):
         self.scan_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.stop_event.clear()
+
+    def news_symbols(self, max_symbols: int) -> list[str]:
+        if self.results:
+            symbols = [str(row.get("symbol", "")).strip().upper() for row in self.results]
+        else:
+            symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
+        symbols = [symbol for symbol in dict.fromkeys(symbols) if symbol]
+        return symbols[:max_symbols]
+
+    def start_news_load(self) -> None:
+        if yf is None:
+            messagebox.showerror(self._t("dlg_missing_dep_title"), self._t("dlg_missing_dep_body"))
+            return
+        try:
+            max_symbols = max(1, int(self.news_max_symbols_var.get()))
+            items_per_symbol = max(1, int(self.news_items_per_symbol_var.get()))
+        except ValueError:
+            messagebox.showerror(self._t("dlg_invalid_input_title"), self._t("dlg_invalid_number_body"))
+            return
+        symbols = self.news_symbols(max_symbols)
+        if not symbols:
+            messagebox.showinfo(self._t("dlg_no_news_symbols_title"), self._t("dlg_no_news_symbols_body"))
+            return
+        self.news_results.clear()
+        self.clear_news_table()
+        self.news_count_var.set(self._t("count_news", count=0))
+        self.news_stop_event.clear()
+        self.load_news_button.configure(state="disabled")
+        self.stop_news_button.configure(state="normal")
+        self.news_status_var.set(self._t("news_status_loading", symbol=symbols[0], checked=1, total=len(symbols)))
+        self.news_worker = threading.Thread(target=self.load_news_worker, args=(symbols, items_per_symbol), daemon=True)
+        self.news_worker.start()
+
+    def stop_news_load(self) -> None:
+        self.news_stop_event.set()
+        self.news_status_var.set(self._t("news_status_stopping"))
+
+    def load_news_worker(self, symbols: list[str], items_per_symbol: int) -> None:
+        rows: list[dict] = []
+        total = len(symbols)
+        for index, symbol in enumerate(symbols, start=1):
+            if self.news_stop_event.is_set():
+                break
+            self.messages.put(("news_status", self._t("news_status_loading", symbol=symbol, checked=index, total=total)))
+            rows.extend(fetch_symbol_news(symbol, items_per_symbol))
+            self.messages.put(("news_rows", list(rows)))
+            time.sleep(0.05)
+        self.messages.put(("news_done", None))
+
+    def news_finished(self) -> None:
+        self.load_news_button.configure(state="normal")
+        self.stop_news_button.configure(state="disabled")
+        self.news_stop_event.clear()
+
+    def refresh_news_table(self) -> None:
+        self.clear_news_table()
+        self.news_count_var.set(self._t("count_news", count=len(self.news_results)))
+        for index, row in enumerate(self.news_results):
+            values = []
+            for column in NEWS_COLUMNS:
+                value = row.get(column, "")
+                if column == "category":
+                    values.append(localized_news_category(self.lang, str(value)))
+                else:
+                    values.append(str(value))
+            tags = ("odd",) if index % 2 else ()
+            self.news_tree.insert("", "end", values=values, tags=tags)
+
+    def clear_news_table(self) -> None:
+        for item in self.news_tree.get_children():
+            self.news_tree.delete(item)
+
+    def selected_news_link(self) -> str:
+        selection = self.news_tree.selection()
+        if not selection:
+            return ""
+        values = self.news_tree.item(selection[0], "values")
+        if not values or len(values) < len(NEWS_COLUMNS):
+            return ""
+        link_index = NEWS_COLUMNS.index("link")
+        return str(values[link_index] or "")
+
+    def open_selected_news_link(self) -> None:
+        link = self.selected_news_link()
+        if not link:
+            messagebox.showinfo(self._t("dlg_no_news_link_title"), self._t("dlg_no_news_link_body"))
+            return
+        webbrowser.open(link)
+
+    def export_news_csv(self) -> None:
+        if not self.news_results:
+            messagebox.showinfo(self._t("dlg_no_news_title"), self._t("dlg_no_news_body"))
+            return
+        path = filedialog.asksaveasfilename(
+            title=self._t("news_export_title"),
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile="yfinance_news_results.csv",
+        )
+        if not path:
+            return
+        with Path(path).open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=NEWS_COLUMNS)
+            writer.writeheader()
+            for row in self.news_results:
+                output = {column: row.get(column, "") for column in NEWS_COLUMNS}
+                output["category"] = localized_news_category(self.lang, str(output.get("category", "")))
+                writer.writerow(output)
+        messagebox.showinfo(self._t("dlg_exported_title"), self._t("dlg_exported_body", count=len(self.news_results)))
 
     def refresh_table(self) -> None:
         self.clear_table()
