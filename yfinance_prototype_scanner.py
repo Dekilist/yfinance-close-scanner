@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 import calendar
 import queue
+import re
 import threading
 import time
 import tkinter as tk
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -76,6 +77,141 @@ NEWS_COLUMNS = [
     "link",
 ]
 
+NEWS_ALL = "all"
+NEWS_TECH_COMPANY = "tech_company"
+NEWS_TECH_EVENTS = "tech_events"
+NEWS_INDUSTRY_POLICY = "industry_policy"
+NEWS_GEOPOLITICS = "geopolitics"
+NEWS_MARKET_VIEWS = "market_views"
+NEWS_BANK_RESEARCH = "bank_research"
+NEWS_SEC_RULES = "sec_rules"
+NEWS_EXCHANGE_RULES = "exchange_rules"
+NEWS_FED = "fed"
+NEWS_HOT_TOPICS = "hot_topics"
+
+NEWS_CATEGORY_ORDER = [
+    NEWS_TECH_COMPANY,
+    NEWS_TECH_EVENTS,
+    NEWS_INDUSTRY_POLICY,
+    NEWS_GEOPOLITICS,
+    NEWS_MARKET_VIEWS,
+    NEWS_BANK_RESEARCH,
+    NEWS_SEC_RULES,
+    NEWS_EXCHANGE_RULES,
+    NEWS_FED,
+    NEWS_HOT_TOPICS,
+]
+
+NEWS_DAY_RANGE_OPTIONS = ["1", "3", "5", "7", "14", "30", "60", "90"]
+
+NEWS_TOPIC_SEARCHES = {
+    NEWS_TECH_EVENTS: [
+        "NVIDIA GTC",
+        "CES technology",
+        "WWDC",
+    ],
+    NEWS_INDUSTRY_POLICY: [
+        "CHIPS Act",
+        "US export controls",
+        "China semiconductor policy",
+    ],
+    NEWS_GEOPOLITICS: [
+        "sanctions",
+        "tariffs",
+        "trade war",
+    ],
+    NEWS_MARKET_VIEWS: [
+        "Warren Buffett",
+        "Ray Dalio",
+        "Jamie Dimon",
+        "Howard Marks investor",
+    ],
+    NEWS_BANK_RESEARCH: [
+        "Goldman Sachs",
+        "Morgan Stanley",
+        "JPMorgan",
+        "Bank of America",
+        "Citi",
+    ],
+    NEWS_SEC_RULES: ["SEC"],
+    NEWS_EXCHANGE_RULES: [
+        "Nasdaq",
+        "NYSE",
+        "Cboe",
+    ],
+    NEWS_FED: ["Federal Reserve", "FOMC"],
+    NEWS_HOT_TOPICS: ["stock market", "AI stocks", "semiconductor stocks"],
+}
+
+NEWS_CATEGORY_KEYWORDS = {
+    NEWS_TECH_EVENTS: [
+        "conference", "expo", "exhibition", "forum", "summit", "keynote", "symposium",
+        "developer conference", "ces", "computex", "mobile world congress", "wwdc", "gtc",
+    ],
+    NEWS_INDUSTRY_POLICY: [
+        "industrial policy", "industry policy", "chips act", "subsidy", "subsidies", "export control",
+        "technology policy", "semiconductor policy", "ai policy", "manufacturing policy",
+    ],
+    NEWS_GEOPOLITICS: [
+        "war", "conflict", "sanction", "sanctions", "counter-sanction", "retaliatory measures",
+        "tariff", "tariffs", "trade war", "geopolitical", "export ban", "import ban",
+    ],
+    NEWS_MARKET_VIEWS: [
+        "interview", "outlook", "view", "views", "opinion", "predicts", "expects", "warns", "says",
+        "shareholder letter", "annual letter", "market call", "investment thesis", "according to",
+    ],
+    NEWS_BANK_RESEARCH: [
+        "research", "industry report", "sector report", "outlook", "strategy report", "thematic report",
+        "analyst report", "market strategy", "investment bank", "spots", "favors", "recommends", "expects",
+        "raises", "cuts", "upgrades", "downgrades", "tells investors",
+    ],
+    NEWS_SEC_RULES: [
+        "sec rule", "sec rules", "sec regulation", "sec proposal", "securities and exchange commission",
+        "final rule", "proposed rule",
+    ],
+    NEWS_EXCHANGE_RULES: [
+        "exchange rule", "listing rule", "trading rule", "market rule", "rule filing", "rule change",
+        "listing standard", "trading standard",
+    ],
+    NEWS_FED: [
+        "federal reserve", "fomc", "fed chair", "fed governor", "fed policy", "fed meeting",
+        "interest rates", "rate decision", "beige book",
+    ],
+}
+
+TECH_EVENT_KEYWORDS = [
+    "new technology", "new product", "launch", "launches", "launched", "unveil", "unveils", "debut",
+    "capacity expansion", "expands capacity", "production capacity", "new factory", "new plant",
+    "buyback", "share repurchase", "stock repurchase", "insider purchase", "buys shares", "bought shares",
+    "introduces", "rolls out", "releases", "starts manufacturing", "expands manufacturing", "deploys",
+    "partners with", "to power", "powers",
+]
+TECH_NEWNESS_KEYWORDS = ["new", "next-gen", "next generation", "latest", "advanced"]
+TECH_PRODUCT_KEYWORDS = [
+    "technology", "product", "platform", "chip", "processor", "model", "software", "hardware", "service",
+    "system", "factory", "plant", "manufacturing", "production", "capacity", "infrastructure",
+]
+EXECUTIVE_ROLE_KEYWORDS = ["ceo", "cfo", "cto", "coo", "chief executive", "chief financial", "chief technology", "chief operating"]
+EXECUTIVE_CHANGE_KEYWORDS = ["resigns", "resigned", "steps down", "leaves", "depart", "joins", "appointed", "names", "hires", "succeeds"]
+TECH_INDUSTRY_KEYWORDS = [
+    "software", "semiconductor", "computer", "internet", "electronic", "technology", "cybersecurity",
+    "information technology", "consumer electronics", "communication equipment",
+]
+POLICY_ACTOR_KEYWORDS = ["united states", "u.s.", "us", "us government", "china", "chinese", "beijing", "washington"]
+POLICY_ACTION_KEYWORDS = [
+    "policy", "subsidy", "subsidies", "funding", "tax credit", "export control", "export curb",
+    "government plan", "industrial plan", "chips act", "award", "awards", "grant", "grants", "investment",
+]
+VIEW_SPEAKER_KEYWORDS = [
+    "ceo", "chairman", "chief executive", "executive", "investor", "fund manager", "buffett", "dalio",
+    "ackman", "druckenmiller", "howard marks", "cathie wood", "jamie dimon",
+]
+INVESTMENT_BANK_KEYWORDS = [
+    "goldman sachs", "morgan stanley", "jpmorgan", "jp morgan", "bank of america", "bofa", "citi", "citigroup",
+]
+RULE_ACTION_KEYWORDS = ["rule", "rules", "regulation", "proposal", "standard", "guidance", "requirement", "filing"]
+EXCHANGE_NAME_KEYWORDS = ["nyse", "nasdaq", "cboe", "stock exchange", "securities exchange"]
+
 COLUMN_LABELS_BY_LANG = {
     LANG_EN: {
         "symbol": "Symbol",
@@ -141,24 +277,30 @@ NEWS_COLUMN_LABELS_BY_LANG = {
 
 NEWS_CATEGORY_LABELS_BY_LANG = {
     LANG_EN: {
-        "insider": "Insider/Executive",
-        "incident": "Incident/Risk",
-        "legal": "Legal/Investigation",
-        "earnings": "Earnings/Guidance",
-        "deal": "Deal/M&A",
-        "analyst": "Analyst/Rating",
-        "macro": "Macro/Policy",
-        "general": "General",
+        NEWS_ALL: "All Categories",
+        NEWS_TECH_COMPANY: "Tech Company Updates",
+        NEWS_TECH_EVENTS: "Tech Events",
+        NEWS_INDUSTRY_POLICY: "U.S./China Industry Policy",
+        NEWS_GEOPOLITICS: "Geopolitics/Trade",
+        NEWS_MARKET_VIEWS: "Executive/Investor Views",
+        NEWS_BANK_RESEARCH: "Investment Bank Research",
+        NEWS_SEC_RULES: "SEC Rules",
+        NEWS_EXCHANGE_RULES: "Exchange Rules",
+        NEWS_FED: "Federal Reserve",
+        NEWS_HOT_TOPICS: "Investment Hot Topics",
     },
     LANG_ZH: {
-        "insider": "高管/内部人",
-        "incident": "事件/风险",
-        "legal": "法律/调查",
-        "earnings": "财报/指引",
-        "deal": "交易/并购",
-        "analyst": "分析师/评级",
-        "macro": "宏观/政策",
-        "general": "一般新闻",
+        NEWS_ALL: "全部类别",
+        NEWS_TECH_COMPANY: "科技公司动态",
+        NEWS_TECH_EVENTS: "科技会议与展览",
+        NEWS_INDUSTRY_POLICY: "中美产业政策",
+        NEWS_GEOPOLITICS: "地缘政治与贸易",
+        NEWS_MARKET_VIEWS: "高管与投资人观点",
+        NEWS_BANK_RESEARCH: "投行行业研究",
+        NEWS_SEC_RULES: "美国证监会新规",
+        NEWS_EXCHANGE_RULES: "交易所新规",
+        NEWS_FED: "美联储动态",
+        NEWS_HOT_TOPICS: "投资界热议话题",
     },
 }
 
@@ -231,14 +373,16 @@ UI_TEXT = {
         "tab_news": "News",
         "results_title": "Results",
         "news_title": "News",
-        "field_news_max_symbols": "News Max Symbols",
-        "field_news_items": "Items / Symbol",
+        "field_news_max_symbols": "Tech Symbols",
+        "field_news_items": "Items / Search",
+        "field_news_days": "News Range (Days)",
+        "field_news_category": "Category",
         "count_matches": "{count} matches",
         "count_news": "{count} news items",
         "status_ready": "Ready to scan.",
         "news_status_ready": "Ready to load news.",
-        "news_status_loading": "Loading news for {symbol} ({checked}/{total})...",
-        "news_status_done": "Done. {count} news items.",
+        "news_status_loading": "Loading {symbol} ({checked}/{total})...",
+        "news_status_done": "Done. {count} news items from {start_date} to {end_date}.",
         "news_status_stopping": "Stopping news load...",
         "status_preparing": "Preparing symbols...",
         "status_stopping": "Stopping after the current request...",
@@ -250,7 +394,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "Missing dependency",
         "dlg_missing_dep_body": "Install first:\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "Invalid input",
-        "dlg_invalid_number_body": "News Max Symbols and Items / Symbol must be whole numbers.",
+        "dlg_invalid_number_body": "Tech Symbols, Items / Search, and News Range must be whole numbers.",
         "dlg_invalid_date_body": "Choose both Close Month and Close Day, or leave both blank for today's date.",
         "dlg_no_symbols_title": "No symbols",
         "dlg_no_symbols_body": "Enter at least one ticker symbol.",
@@ -311,14 +455,16 @@ UI_TEXT = {
         "tab_news": "新闻",
         "results_title": "扫描结果",
         "news_title": "新闻",
-        "field_news_max_symbols": "新闻股票数",
-        "field_news_items": "每股新闻数",
+        "field_news_max_symbols": "科技股数量",
+        "field_news_items": "每次搜索条数",
+        "field_news_days": "新闻范围（天）",
+        "field_news_category": "新闻类别",
         "count_matches": "共 {count} 个结果",
         "count_news": "共 {count} 条新闻",
         "status_ready": "准备扫描。",
         "news_status_ready": "准备加载新闻。",
-        "news_status_loading": "正在加载 {symbol} 新闻 ({checked}/{total})...",
-        "news_status_done": "完成，共 {count} 条新闻。",
+        "news_status_loading": "正在加载 {symbol} ({checked}/{total})...",
+        "news_status_done": "完成，{start_date} 至 {end_date} 共 {count} 条新闻。",
         "news_status_stopping": "正在停止新闻加载...",
         "status_preparing": "正在准备股票代码...",
         "status_stopping": "将在当前请求结束后停止...",
@@ -330,7 +476,7 @@ UI_TEXT = {
         "dlg_missing_dep_title": "缺少依赖",
         "dlg_missing_dep_body": "请先安装：\n\npython -m pip install yfinance pandas",
         "dlg_invalid_input_title": "输入无效",
-        "dlg_invalid_number_body": "新闻股票数和每股新闻数必须是整数。",
+        "dlg_invalid_number_body": "科技股数量、每次搜索条数和最近天数必须是整数。",
         "dlg_invalid_date_body": "请选择收盘月份和日期，或两项都留空使用今天日期。",
         "dlg_no_symbols_title": "没有股票代码",
         "dlg_no_symbols_body": "请至少输入一个股票代码。",
@@ -599,36 +745,87 @@ def history_as_of_date(daily, target_date):
     return daily.loc[dates.normalize() <= target.normalize()]
 
 
-def classify_news(text: str) -> str:
+def contains_news_keyword(text: str, keyword: str) -> bool:
     lowered = text.lower()
-    keyword_groups = [
-        ("insider", ["insider", "executive", "ceo", "cfo", "chairman", "director", "sold shares", "sells shares", "stock sale", "form 4"]),
-        ("incident", ["incident", "outage", "cyber", "hack", "breach", "fire", "explosion", "crash", "recall", "accident", "shutdown"]),
-        ("legal", ["lawsuit", "sues", "settlement", "investigation", "probe", "sec", "doj", "fraud", "antitrust", "regulator"]),
-        ("earnings", ["earnings", "revenue", "profit", "loss", "guidance", "forecast", "results", "quarter"]),
-        ("deal", ["acquire", "acquisition", "merger", "buyout", "takeover", "deal", "stake", "partnership"]),
-        ("analyst", ["analyst", "rating", "upgrade", "downgrade", "price target", "initiates", "maintains"]),
-        ("macro", ["fed", "inflation", "tariff", "rate cut", "rate hike", "policy", "china", "oil prices"]),
+    keyword = keyword.lower()
+    if re.fullmatch(r"[a-z0-9]+", keyword):
+        return re.search(rf"\b{re.escape(keyword)}\b", lowered) is not None
+    return keyword in lowered
+
+
+def matches_news_category(text: str, category: str) -> bool:
+    if category == NEWS_TECH_COMPANY:
+        has_company_event = any(contains_news_keyword(text, keyword) for keyword in TECH_EVENT_KEYWORDS)
+        has_newness = any(contains_news_keyword(text, keyword) for keyword in TECH_NEWNESS_KEYWORDS)
+        has_tech_product = any(contains_news_keyword(text, keyword) for keyword in TECH_PRODUCT_KEYWORDS)
+        has_role = any(contains_news_keyword(text, keyword) for keyword in EXECUTIVE_ROLE_KEYWORDS)
+        has_change = any(contains_news_keyword(text, keyword) for keyword in EXECUTIVE_CHANGE_KEYWORDS)
+        return has_company_event or (has_newness and has_tech_product) or (has_role and has_change)
+    if category == NEWS_INDUSTRY_POLICY:
+        has_actor = any(contains_news_keyword(text, keyword) for keyword in POLICY_ACTOR_KEYWORDS)
+        has_action = any(contains_news_keyword(text, keyword) for keyword in POLICY_ACTION_KEYWORDS)
+        return has_actor and has_action
+    if category == NEWS_MARKET_VIEWS:
+        has_speaker = any(contains_news_keyword(text, keyword) for keyword in VIEW_SPEAKER_KEYWORDS)
+        has_view = any(contains_news_keyword(text, keyword) for keyword in NEWS_CATEGORY_KEYWORDS[NEWS_MARKET_VIEWS])
+        return has_speaker and has_view
+    if category == NEWS_BANK_RESEARCH:
+        has_bank = any(contains_news_keyword(text, keyword) for keyword in INVESTMENT_BANK_KEYWORDS)
+        has_research = any(contains_news_keyword(text, keyword) for keyword in NEWS_CATEGORY_KEYWORDS[NEWS_BANK_RESEARCH])
+        return has_bank and has_research
+    if category == NEWS_SEC_RULES:
+        has_sec = contains_news_keyword(text, "sec") or contains_news_keyword(text, "securities and exchange commission")
+        has_rule = any(contains_news_keyword(text, keyword) for keyword in RULE_ACTION_KEYWORDS)
+        return has_sec and has_rule
+    if category == NEWS_EXCHANGE_RULES:
+        has_exchange = any(contains_news_keyword(text, keyword) for keyword in EXCHANGE_NAME_KEYWORDS)
+        has_rule = any(contains_news_keyword(text, keyword) for keyword in RULE_ACTION_KEYWORDS)
+        return has_exchange and has_rule
+    if category == NEWS_HOT_TOPICS:
+        return True
+    return any(contains_news_keyword(text, keyword) for keyword in NEWS_CATEGORY_KEYWORDS.get(category, []))
+
+
+def classify_news(text: str) -> str:
+    priority = [
+        NEWS_SEC_RULES,
+        NEWS_EXCHANGE_RULES,
+        NEWS_FED,
+        NEWS_GEOPOLITICS,
+        NEWS_INDUSTRY_POLICY,
+        NEWS_TECH_EVENTS,
+        NEWS_BANK_RESEARCH,
+        NEWS_MARKET_VIEWS,
+        NEWS_TECH_COMPANY,
     ]
-    for category, keywords in keyword_groups:
-        if any(keyword in lowered for keyword in keywords):
+    for category in priority:
+        if matches_news_category(text, category):
             return category
-    return "general"
+    return NEWS_HOT_TOPICS
+
+
+def news_timestamp(value) -> float:
+    if not value:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except ValueError:
+        return 0.0
 
 
 def format_news_time(value) -> str:
-    if not value:
+    timestamp = news_timestamp(value)
+    if not timestamp:
         return ""
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
-    text = str(value)
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
-    except ValueError:
-        return text[:19]
+    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
-def extract_news_row(symbol: str, item: dict) -> dict:
+def extract_news_row(symbol: str, item: dict, category: str | None = None) -> dict:
     content = item.get("content") if isinstance(item, dict) else None
     if isinstance(content, dict):
         title = content.get("title") or ""
@@ -644,25 +841,109 @@ def extract_news_row(symbol: str, item: dict) -> dict:
         source = item.get("publisher", "") if isinstance(item, dict) else ""
         link = item.get("link", "") if isinstance(item, dict) else ""
         published = item.get("providerPublishTime") if isinstance(item, dict) else ""
+    text = f"{title} {summary}".strip()
     return {
         "symbol": symbol,
         "time": format_news_time(published),
-        "category": classify_news(f"{title} {summary}"),
+        "category": category or classify_news(text),
         "source": source or "",
         "headline": title or summary or "(no headline)",
         "link": link or "",
+        "_published_ts": news_timestamp(published),
+        "_news_id": item.get("uuid", "") if isinstance(item, dict) else "",
+        "_search_text": text,
     }
 
 
-def fetch_symbol_news(symbol: str, limit: int) -> list[dict]:
+def news_date_range(recent_days: int, today: date | None = None) -> tuple[date, date]:
+    day_count = max(1, recent_days)
+    end_date = today or datetime.now().astimezone().date()
+    start_date = end_date - timedelta(days=day_count - 1)
+    return start_date, end_date
+
+
+def is_recent_news(row: dict, recent_days: int) -> bool:
+    published = to_float(row.get("_published_ts"))
+    if not published:
+        return True
+    start_date, end_date = news_date_range(recent_days)
+    published_date = datetime.fromtimestamp(published, tz=timezone.utc).astimezone().date()
+    return start_date <= published_date <= end_date
+
+
+def is_technology_quote(quote: dict) -> bool:
+    sector = str(quote.get("sector") or quote.get("sectorDisp") or "").lower()
+    industry = str(quote.get("industry") or quote.get("industryDisp") or "").lower()
+    return sector == "technology" or any(contains_news_keyword(industry, keyword) for keyword in TECH_INDUSTRY_KEYWORDS)
+
+
+def yahoo_news_search(query: str, limit: int):
     if yf is None:
-        return []
+        return None
     try:
-        raw_items = yf.Ticker(symbol).news or []
+        return yf.Search(
+            query,
+            max_results=5,
+            news_count=max(1, limit),
+            lists_count=0,
+            include_cb=False,
+            recommended=0,
+            timeout=20,
+            raise_errors=False,
+        )
     except Exception:
+        return None
+
+
+def fetch_technology_company_news(symbol: str, limit: int, recent_days: int) -> list[dict]:
+    search = yahoo_news_search(symbol, max(limit * 3, 10))
+    if search is None:
         return []
-    rows = [extract_news_row(symbol, item) for item in raw_items[:limit]]
-    return [row for row in rows if row.get("headline")]
+    exact_quote = next(
+        (quote for quote in search.quotes if str(quote.get("symbol", "")).upper() == symbol.upper()),
+        None,
+    )
+    if not exact_quote or not is_technology_quote(exact_quote):
+        return []
+    rows: list[dict] = []
+    for item in search.news:
+        related = [str(value).upper() for value in item.get("relatedTickers", [])] if isinstance(item, dict) else []
+        if related and symbol.upper() not in related:
+            continue
+        row = extract_news_row(symbol, item, NEWS_TECH_COMPANY)
+        if matches_news_category(row.get("_search_text", ""), NEWS_TECH_COMPANY) and is_recent_news(row, recent_days):
+            rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def fetch_topic_news(category: str, query: str, limit: int, recent_days: int) -> list[dict]:
+    search = yahoo_news_search(query, max(limit * 2, limit))
+    if search is None:
+        return []
+    rows: list[dict] = []
+    for item in search.news:
+        related = item.get("relatedTickers", []) if isinstance(item, dict) else []
+        scope = ",".join(str(value).upper() for value in related[:3]) or "MARKET"
+        row = extract_news_row(scope, item, category)
+        if matches_news_category(row.get("_search_text", ""), category) and is_recent_news(row, recent_days):
+            rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def deduplicate_news(rows: list[dict]) -> list[dict]:
+    unique: list[dict] = []
+    seen: set[str] = set()
+    for row in sorted(rows, key=lambda item: to_float(item.get("_published_ts")), reverse=True):
+        key = str(row.get("link") or row.get("_news_id") or row.get("headline", "")).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
 
 
 def get_symbol_frame(raw, symbol: str, symbol_count: int):
@@ -909,8 +1190,12 @@ class YFinancePrototypeScanner(tk.Tk):
         self.box_width_pct_var = tk.StringVar(value="15")
         self.min_breakout_turnover_var = tk.StringVar(value="30000000")
         self.breakout_turnover_multiple_var = tk.StringVar(value="1.5")
-        self.news_max_symbols_var = tk.StringVar(value="25")
+        self.news_max_symbols_var = tk.StringVar(value="10")
         self.news_items_per_symbol_var = tk.StringVar(value="5")
+        self.news_recent_days_var = tk.StringVar(value="5")
+        self.news_range_start, self.news_range_end = news_date_range(5)
+        self.news_filter_key = NEWS_ALL
+        self.news_filter_display_var = tk.StringVar(value=localized_news_category(self.lang, NEWS_ALL))
 
         self.trait_vars = {
             TRAIT_MOVER: tk.BooleanVar(value=True),
@@ -940,6 +1225,17 @@ class YFinancePrototypeScanner(tk.Tk):
 
     def _on_match_mode_selected(self, _event=None) -> None:
         self.match_mode_var.set(choice_from_label(self.lang, "match_mode", self.match_mode_display_var.get()))
+
+    def _news_category_values(self) -> list[str]:
+        return [localized_news_category(self.lang, key) for key in [NEWS_ALL, *NEWS_CATEGORY_ORDER]]
+
+    def _on_news_category_selected(self, _event=None) -> None:
+        selected = self.news_filter_display_var.get()
+        for key in [NEWS_ALL, *NEWS_CATEGORY_ORDER]:
+            if selected in {localized_news_category(self.lang, key), localized_news_category(LANG_EN, key)}:
+                self.news_filter_key = key
+                break
+        self.refresh_news_table()
 
     def _on_close_month_selected(self, _event=None) -> None:
         self._refresh_close_day_options()
@@ -984,6 +1280,9 @@ class YFinancePrototypeScanner(tk.Tk):
         if hasattr(self, "news_tree"):
             for column in NEWS_COLUMNS:
                 self.news_tree.heading(column, text=localized_news_column(self.lang, column))
+        if hasattr(self, "news_filter_combo"):
+            self.news_filter_display_var.set(localized_news_category(self.lang, self.news_filter_key))
+            self.news_filter_combo.configure(values=self._news_category_values())
         if hasattr(self, "right_notebook"):
             self.right_notebook.tab(self.results_tab, text=self._t("tab_results"))
             self.right_notebook.tab(self.news_tab, text=self._t("tab_news"))
@@ -1331,9 +1630,44 @@ class YFinancePrototypeScanner(tk.Tk):
 
         controls = ttk.Frame(parent, style="Section.TFrame", padding=(16, 14))
         controls.grid(row=1, column=0, sticky="ew", pady=(0, 14))
-        controls.columnconfigure(5, weight=1)
-        self._compact_field(controls, 0, "field_news_max_symbols", self.news_max_symbols_var, width=8)
-        self._compact_field(controls, 2, "field_news_items", self.news_items_per_symbol_var, width=8)
+        for column in range(4):
+            controls.columnconfigure(column, weight=1, uniform="news_controls")
+
+        news_fields = [
+            ("field_news_max_symbols", self.news_max_symbols_var),
+            ("field_news_items", self.news_items_per_symbol_var),
+            ("field_news_days", self.news_recent_days_var),
+        ]
+        for column, (label_key, variable) in enumerate(news_fields):
+            label = ttk.Label(controls, text=self._t(label_key), style="FieldLabel.TLabel")
+            label.grid(row=0, column=column, sticky="w", padx=(0, 10))
+            self.label_widgets[label_key] = label
+            if label_key == "field_news_days":
+                self.news_days_combo = ttk.Combobox(
+                    controls,
+                    textvariable=variable,
+                    values=NEWS_DAY_RANGE_OPTIONS,
+                    state="readonly",
+                    justify="center",
+                    style="Modern.TCombobox",
+                )
+                field_widget = self.news_days_combo
+            else:
+                field_widget = ttk.Entry(controls, textvariable=variable, style="Modern.TEntry", justify="center")
+            field_widget.grid(row=1, column=column, sticky="ew", padx=(0, 10), pady=(5, 0))
+
+        category_label = ttk.Label(controls, text=self._t("field_news_category"), style="FieldLabel.TLabel")
+        category_label.grid(row=0, column=3, sticky="w")
+        self.label_widgets["field_news_category"] = category_label
+        self.news_filter_combo = ttk.Combobox(
+            controls,
+            textvariable=self.news_filter_display_var,
+            values=self._news_category_values(),
+            state="readonly",
+            style="Modern.TCombobox",
+        )
+        self.news_filter_combo.grid(row=1, column=3, sticky="ew", pady=(5, 0))
+        self.news_filter_combo.bind("<<ComboboxSelected>>", self._on_news_category_selected)
 
         self.load_news_button = ttk.Button(
             controls,
@@ -1341,7 +1675,7 @@ class YFinancePrototypeScanner(tk.Tk):
             command=self.start_news_load,
             style="Accent.TButton",
         )
-        self.load_news_button.grid(row=0, column=4, sticky="ew", padx=(12, 6))
+        self.load_news_button.grid(row=2, column=0, sticky="ew", padx=(0, 6), pady=(14, 0))
         self.button_widgets["button_load_news"] = self.load_news_button
         self.stop_news_button = ttk.Button(
             controls,
@@ -1350,20 +1684,20 @@ class YFinancePrototypeScanner(tk.Tk):
             state="disabled",
             style="Quiet.TButton",
         )
-        self.stop_news_button.grid(row=0, column=5, sticky="ew", padx=6)
+        self.stop_news_button.grid(row=2, column=1, sticky="ew", padx=6, pady=(14, 0))
         self.button_widgets["button_stop_news"] = self.stop_news_button
         export_news_button = ttk.Button(controls, text=self._t("button_export_news"), command=self.export_news_csv)
-        export_news_button.grid(row=0, column=6, sticky="ew", padx=6)
+        export_news_button.grid(row=2, column=2, sticky="ew", padx=6, pady=(14, 0))
         self.button_widgets["button_export_news"] = export_news_button
         open_news_button = ttk.Button(controls, text=self._t("button_open_news"), command=self.open_selected_news_link)
-        open_news_button.grid(row=0, column=7, sticky="ew", padx=(6, 0))
+        open_news_button.grid(row=2, column=3, sticky="ew", padx=(6, 0), pady=(14, 0))
         self.button_widgets["button_open_news"] = open_news_button
 
         self.news_status_var = tk.StringVar(value=self._t("news_status_ready"))
         ttk.Label(controls, textvariable=self.news_status_var, style="SectionSubtle.TLabel").grid(
-            row=1,
+            row=3,
             column=0,
-            columnspan=8,
+            columnspan=4,
             sticky="ew",
             pady=(12, 0),
         )
@@ -1392,14 +1726,6 @@ class YFinancePrototypeScanner(tk.Tk):
         x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.news_tree.xview, style="Horizontal.TScrollbar")
         x_scroll.grid(row=1, column=0, sticky="ew")
         self.news_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-
-    def _compact_field(self, parent: ttk.Frame, column: int, label_key: str, variable: tk.Variable, width: int = 10) -> ttk.Entry:
-        label = ttk.Label(parent, text=self._t(label_key), style="FieldLabel.TLabel")
-        label.grid(row=0, column=column, sticky="w", padx=(0, 8))
-        self.label_widgets[label_key] = label
-        entry = ttk.Entry(parent, textvariable=variable, width=width, style="Modern.TEntry", justify="center")
-        entry.grid(row=0, column=column + 1, sticky="w", padx=(0, 10))
-        return entry
 
     def read_config(self) -> ScannerConfig:
         symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
@@ -1544,7 +1870,14 @@ class YFinancePrototypeScanner(tk.Tk):
                     self.news_results = list(payload)
                     self.refresh_news_table()
                 elif kind == "news_done":
-                    self.news_status_var.set(self._t("news_status_done", count=len(self.news_results)))
+                    self.news_status_var.set(
+                        self._t(
+                            "news_status_done",
+                            count=len(self.news_results),
+                            start_date=self.news_range_start.isoformat(),
+                            end_date=self.news_range_end.isoformat(),
+                        )
+                    )
                     self.news_finished()
         except queue.Empty:
             pass
@@ -1570,36 +1903,47 @@ class YFinancePrototypeScanner(tk.Tk):
             return
         try:
             max_symbols = max(1, int(self.news_max_symbols_var.get()))
-            items_per_symbol = max(1, int(self.news_items_per_symbol_var.get()))
+            items_per_search = max(1, int(self.news_items_per_symbol_var.get()))
+            recent_days = max(1, int(self.news_recent_days_var.get()))
         except ValueError:
             messagebox.showerror(self._t("dlg_invalid_input_title"), self._t("dlg_invalid_number_body"))
             return
+        self.news_range_start, self.news_range_end = news_date_range(recent_days)
         symbols = self.news_symbols(max_symbols)
-        if not symbols:
-            messagebox.showinfo(self._t("dlg_no_news_symbols_title"), self._t("dlg_no_news_symbols_body"))
-            return
         self.news_results.clear()
         self.clear_news_table()
         self.news_count_var.set(self._t("count_news", count=0))
         self.news_stop_event.clear()
         self.load_news_button.configure(state="disabled")
         self.stop_news_button.configure(state="normal")
-        self.news_status_var.set(self._t("news_status_loading", symbol=symbols[0], checked=1, total=len(symbols)))
-        self.news_worker = threading.Thread(target=self.load_news_worker, args=(symbols, items_per_symbol), daemon=True)
+        self.news_status_var.set(self._t("news_status_loading", symbol="News", checked=0, total=1))
+        self.news_worker = threading.Thread(
+            target=self.load_news_worker,
+            args=(symbols, items_per_search, recent_days),
+            daemon=True,
+        )
         self.news_worker.start()
 
     def stop_news_load(self) -> None:
         self.news_stop_event.set()
         self.news_status_var.set(self._t("news_status_stopping"))
 
-    def load_news_worker(self, symbols: list[str], items_per_symbol: int) -> None:
+    def load_news_worker(self, symbols: list[str], items_per_search: int, recent_days: int) -> None:
         rows: list[dict] = []
-        total = len(symbols)
-        for index, symbol in enumerate(symbols, start=1):
+        tasks: list[tuple[str, str, str]] = []
+        for category, queries in NEWS_TOPIC_SEARCHES.items():
+            tasks.extend((category, query, localized_news_category(self.lang, category)) for query in queries)
+        tasks.extend((NEWS_TECH_COMPANY, symbol, symbol) for symbol in symbols)
+        total = len(tasks)
+        for index, (category, query, label) in enumerate(tasks, start=1):
             if self.news_stop_event.is_set():
                 break
-            self.messages.put(("news_status", self._t("news_status_loading", symbol=symbol, checked=index, total=total)))
-            rows.extend(fetch_symbol_news(symbol, items_per_symbol))
+            self.messages.put(("news_status", self._t("news_status_loading", symbol=label, checked=index, total=total)))
+            if category == NEWS_TECH_COMPANY:
+                rows.extend(fetch_technology_company_news(query, items_per_search, recent_days))
+            else:
+                rows.extend(fetch_topic_news(category, query, items_per_search, recent_days))
+            rows = deduplicate_news(rows)
             self.messages.put(("news_rows", list(rows)))
             time.sleep(0.05)
         self.messages.put(("news_done", None))
@@ -1611,8 +1955,9 @@ class YFinancePrototypeScanner(tk.Tk):
 
     def refresh_news_table(self) -> None:
         self.clear_news_table()
-        self.news_count_var.set(self._t("count_news", count=len(self.news_results)))
-        for index, row in enumerate(self.news_results):
+        visible_rows = self.filtered_news_results()
+        self.news_count_var.set(self._t("count_news", count=len(visible_rows)))
+        for index, row in enumerate(visible_rows):
             values = []
             for column in NEWS_COLUMNS:
                 value = row.get(column, "")
@@ -1622,6 +1967,11 @@ class YFinancePrototypeScanner(tk.Tk):
                     values.append(str(value))
             tags = ("odd",) if index % 2 else ()
             self.news_tree.insert("", "end", values=values, tags=tags)
+
+    def filtered_news_results(self) -> list[dict]:
+        if self.news_filter_key == NEWS_ALL:
+            return list(self.news_results)
+        return [row for row in self.news_results if row.get("category") == self.news_filter_key]
 
     def clear_news_table(self) -> None:
         for item in self.news_tree.get_children():
@@ -1645,7 +1995,8 @@ class YFinancePrototypeScanner(tk.Tk):
         webbrowser.open(link)
 
     def export_news_csv(self) -> None:
-        if not self.news_results:
+        visible_rows = self.filtered_news_results()
+        if not visible_rows:
             messagebox.showinfo(self._t("dlg_no_news_title"), self._t("dlg_no_news_body"))
             return
         path = filedialog.asksaveasfilename(
@@ -1659,11 +2010,11 @@ class YFinancePrototypeScanner(tk.Tk):
         with Path(path).open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=NEWS_COLUMNS)
             writer.writeheader()
-            for row in self.news_results:
+            for row in visible_rows:
                 output = {column: row.get(column, "") for column in NEWS_COLUMNS}
                 output["category"] = localized_news_category(self.lang, str(output.get("category", "")))
                 writer.writerow(output)
-        messagebox.showinfo(self._t("dlg_exported_title"), self._t("dlg_exported_body", count=len(self.news_results)))
+        messagebox.showinfo(self._t("dlg_exported_title"), self._t("dlg_exported_body", count=len(visible_rows)))
 
     def refresh_table(self) -> None:
         self.clear_table()

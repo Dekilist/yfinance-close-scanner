@@ -78,22 +78,32 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 - Select one or more traits.
 - Click `Run Scan`.
 - Click `Export CSV` after a scan to save the current results.
-- Open the `News` tab after a scan to load recent Yahoo/yfinance news for the matched symbols.
-- If there are no scan results yet, the `News` tab uses the manually entered symbols instead.
+- Open the `News` tab to load the ten requested company and market-wide news categories.
+- `Tech Symbols` limits how many scan-result symbols are checked for technology-company updates. If there are no scan results, the manually entered symbols are used.
+- `Items / Search` controls the maximum result count for each company or topic search.
+- `News Range (Days)` is a dropdown with `1`, `3`, `5`, `7`, `14`, `30`, `60`, and `90` days. The default is `5`.
+- The range counts calendar dates inclusively from today. For example, selecting `5` includes today and the previous four dates. The completed status shows the exact start and end dates.
+- Use the category menu to show all news or one of the ten categories. Export follows the visible category filter.
 - Double-click a news row, or select it and click `Open Link`, to open the source article.
 - Click `Export News CSV` to save the loaded news rows.
 - Use the `Chinese` / `English` language button to switch the interface language.
 
 ## News Tab
 
-The `News` tab is designed as a quick risk and catalyst companion to the scanner results. It loads recent Yahoo/yfinance news for the selected symbols and classifies headlines into practical buckets:
+The `News` tab implements these ten independent categories:
 
-- `Insider/Executive`: examples include insider sales, senior executive stock sales, Form 4-style wording, CEO/CFO/director headlines.
-- `Incident/Risk`: examples include outages, cyber incidents, recalls, accidents, shutdowns, crashes, and other operational events.
-- `Legal/Investigation`: lawsuits, settlements, SEC/DOJ/regulator probes, fraud, antitrust, and similar risk items.
-- `Earnings/Guidance`, `Deal/M&A`, `Analyst/Rating`, `Macro/Policy`, and `General`.
+1. `Tech Company Updates`: new technology, products, capacity increases, buybacks, insider purchases, and CEO/CFO/CTO/COO arrivals or departures. A symbol is included only when Yahoo identifies it as a technology company.
+2. `Tech Events`: important technology conferences, exhibitions, forums, summits, and keynotes.
+3. `U.S./China Industry Policy`: new industrial policies, subsidies, funding plans, and export controls from the United States or China.
+4. `Geopolitics/Trade`: wars, sanctions, counter-sanctions, export bans, and tariff or trade-war escalation.
+5. `Executive/Investor Views`: new interviews, articles, letters, warnings, predictions, and outlooks from major-company executives or well-known investors.
+6. `Investment Bank Research`: industry and strategy research from Goldman Sachs, Morgan Stanley, JPMorgan, Bank of America, and Citi.
+7. `SEC Rules`: new SEC rules, regulations, proposals, standards, and guidance.
+8. `Exchange Rules`: new NYSE, Nasdaq, Cboe, listing, and trading rules.
+9. `Federal Reserve`: Federal Reserve and FOMC decisions, meetings, policy, and rate news.
+10. `Investment Hot Topics`: themes currently receiving attention in investing and stock-market coverage.
 
-The categories are keyword-based helpers, not legal or financial conclusions. Yahoo/yfinance news may miss SEC filings, insider transactions, local incidents, paywalled articles, or smaller-company updates. For complete insider sale monitoring, add a licensed SEC/Form 4 or corporate-actions data source later.
+The app uses targeted Yahoo searches, keyword relevance checks, a recent-day cutoff, and duplicate removal. These categories are research helpers, not legal or financial conclusions. Yahoo/yfinance cannot guarantee complete coverage of SEC releases, exchange notices, conferences, paywalled bank research, executive comments, or breaking geopolitical events. Production-grade monitoring would need direct SEC, Federal Reserve, exchange, government, conference, and licensed news/research feeds.
 
 ## Data Notes
 
@@ -103,7 +113,7 @@ Important limitations:
 
 - The latest daily bar may be delayed, adjusted, incomplete, or unavailable.
 - Yahoo/yfinance can throttle requests, especially when scanning the full U.S. universe.
-- Yahoo/yfinance news coverage varies by symbol and does not guarantee complete recent news or insider-transaction coverage.
+- Yahoo/yfinance news coverage varies and does not guarantee complete or real-time coverage of any of the ten news categories.
 - Market cap can be missing for some symbols. The app has an `Allow missing market cap` option, but turning it on makes market-cap filters less strict.
 - Mover ratio is approximated as latest daily volume divided by the previous 20-day average volume. It is not Futu's real-time volume ratio.
 - Turnover is approximated as `Close * Volume`.
