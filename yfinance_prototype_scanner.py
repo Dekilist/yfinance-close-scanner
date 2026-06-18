@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import calendar
+import html
 import json
 import queue
 import re
@@ -13,8 +14,10 @@ import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+import xml.etree.ElementTree as ET
 
 try:
     import pandas as pd
@@ -106,6 +109,24 @@ NEWS_CATEGORY_ORDER = [
 
 NEWS_DAY_RANGE_OPTIONS = ["1", "3", "5", "7", "14", "30", "60", "90"]
 SUMMARY_TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
+GOOGLE_NEWS_RSS_URL = "https://news.google.com/rss/search"
+GOOGLE_TECH_UPDATE_SEARCHES = [
+    '(launches OR unveils OR introduces OR "now available" OR "globally available") (AI OR software OR platform OR technology)',
+    'accounts globally available gaming',
+    '(MOSFET OR semiconductor OR "silicon carbide" OR processor OR chip) (launches OR unveils OR introduces OR "new benchmark")',
+    '("share buyback" OR "stock repurchase" OR "insider purchase" OR "expands capacity" OR "new factory") technology',
+    '(CEO OR CFO OR CTO OR COO) (appointed OR resigns OR joins OR "steps down") (technology OR software OR semiconductor)',
+]
+
+GOOGLE_FOCUSED_TOPIC_SEARCHES = {
+    NEWS_MARKET_VIEWS: [
+        '(CEO OR investor OR "fund manager") (interview OR says OR warns OR outlook OR letter) markets',
+        '("Fortune 500" OR billionaire) (CEO OR investor) (views OR interview OR outlook)',
+    ],
+    NEWS_BANK_RESEARCH: [
+        '("Goldman Sachs" OR "Morgan Stanley" OR JPMorgan OR "Bank of America" OR Citi) (research OR outlook OR forecast OR recommends)',
+    ],
+}
 
 NEWS_TOPIC_SEARCHES = {
     NEWS_TECH_EVENTS: [
@@ -128,6 +149,10 @@ NEWS_TOPIC_SEARCHES = {
         "Ray Dalio",
         "Jamie Dimon",
         "Howard Marks investor",
+        "Michael Burry",
+        "Bill Ackman",
+        "Cathie Wood",
+        "Stanley Druckenmiller",
     ],
     NEWS_BANK_RESEARCH: [
         "Goldman Sachs",
@@ -135,6 +160,13 @@ NEWS_TOPIC_SEARCHES = {
         "JPMorgan",
         "Bank of America",
         "Citi",
+        "Wells Fargo",
+        "UBS",
+        "Barclays",
+        "Deutsche Bank",
+        "Jefferies",
+        "Evercore ISI",
+        "Bernstein",
     ],
     NEWS_SEC_RULES: ["SEC"],
     NEWS_EXCHANGE_RULES: [
@@ -187,18 +219,21 @@ TECH_EVENT_KEYWORDS = [
     "capacity expansion", "expands capacity", "production capacity", "new factory", "new plant",
     "buyback", "share repurchase", "stock repurchase", "insider purchase", "buys shares", "bought shares",
     "introduces", "rolls out", "releases", "starts manufacturing", "expands manufacturing", "deploys",
-    "partners with", "to power", "powers",
+    "partners with", "to power", "powers", "globally available", "now available", "rollout", "rolls out",
+    "announces", "announcement", "company update", "sets new benchmark",
 ]
 TECH_NEWNESS_KEYWORDS = ["new", "next-gen", "next generation", "latest", "advanced"]
 TECH_PRODUCT_KEYWORDS = [
     "technology", "product", "platform", "chip", "processor", "model", "software", "hardware", "service",
     "system", "factory", "plant", "manufacturing", "production", "capacity", "infrastructure",
+    "mosfet", "semiconductor", "silicon carbide",
 ]
 EXECUTIVE_ROLE_KEYWORDS = ["ceo", "cfo", "cto", "coo", "chief executive", "chief financial", "chief technology", "chief operating"]
 EXECUTIVE_CHANGE_KEYWORDS = ["resigns", "resigned", "steps down", "leaves", "depart", "joins", "appointed", "names", "hires", "succeeds"]
 TECH_INDUSTRY_KEYWORDS = [
     "software", "semiconductor", "computer", "internet", "electronic", "technology", "cybersecurity",
-    "information technology", "consumer electronics", "communication equipment",
+    "information technology", "consumer electronics", "communication equipment", "electronic gaming",
+    "interactive media", "internet content",
 ]
 POLICY_ACTOR_KEYWORDS = ["united states", "u.s.", "us", "us government", "china", "chinese", "beijing", "washington"]
 POLICY_ACTION_KEYWORDS = [
@@ -214,6 +249,12 @@ INVESTMENT_BANK_KEYWORDS = [
 ]
 RULE_ACTION_KEYWORDS = ["rule", "rules", "regulation", "proposal", "standard", "guidance", "requirement", "filing"]
 EXCHANGE_NAME_KEYWORDS = ["nyse", "nasdaq", "cboe", "stock exchange", "securities exchange"]
+TRUSTED_NEWS_SOURCE_TERMS = [
+    "reuters", "bloomberg", "cnbc", "associated press", "ap news", "wall street journal", "financial times",
+    "barron's", "marketwatch", "business wire", "pr newswire", "globenewswire", "fortune", "forbes",
+    "techcrunch", "the verge", "engadget", "investing.com", "yahoo finance", "morningstar",
+    "msn", "business insider", "fox business", "nareit",
+]
 
 COLUMN_LABELS_BY_LANG = {
     LANG_EN: {
@@ -878,6 +919,110 @@ def translate_summary_to_chinese(text: str) -> str:
     return parse_translation_response(payload)
 
 
+def clean_rss_text(value: str) -> str:
+    text = html.unescape(re.sub(r"<[^>]+>", " ", value or ""))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def news_source_rank(source: str, official_hint: str = "", source_url: str = "") -> int:
+    source_text = source.lower().strip()
+    hint_text = official_hint.lower().strip()
+    if hint_text and source_text and (source_text in hint_text or hint_text in source_text):
+        return 4
+    if ".gov" in source_url.lower() or any(
+        term in source_text for term in ["securities and exchange commission", "federal reserve"]
+    ):
+        return 4
+    if any(term in source_text for term in TRUSTED_NEWS_SOURCE_TERMS):
+        return 3
+    return 1
+
+
+def concise_company_name(value: str) -> str:
+    name = value.strip()
+    return re.sub(
+        r",?\s+(inc\.?|incorporated|corporation|corp\.?|company|co\.?|ltd\.?|plc)$",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    ).strip() or name
+
+
+def google_news_timestamp(value: str) -> float:
+    try:
+        return parsedate_to_datetime(value).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def google_news_row(item, category: str, symbol: str, official_hint: str = "") -> dict:
+    source_node = item.find("source")
+    source = clean_rss_text(source_node.text if source_node is not None and source_node.text else "")
+    source_url = source_node.get("url", "") if source_node is not None else ""
+    title = clean_rss_text(item.findtext("title") or "")
+    suffix = f" - {source}"
+    if source and title.lower().endswith(suffix.lower()):
+        title = title[: -len(suffix)].strip()
+    description = clean_rss_text(item.findtext("description") or "")
+    if title and title.lower() in description.lower():
+        description = ""
+    published = item.findtext("pubDate") or ""
+    published_ts = google_news_timestamp(published)
+    source_rank = news_source_rank(source, official_hint, source_url)
+    if source and len(source) >= 4 and contains_news_keyword(title, source):
+        source_rank = max(source_rank, 4)
+    return {
+        "symbol": symbol,
+        "time": format_news_time(published_ts),
+        "category": category,
+        "source": source,
+        "headline": title or "(no headline)",
+        "summary": news_main_idea(title or "(no headline)", description),
+        "link": item.findtext("link") or "",
+        "_published_ts": published_ts,
+        "_news_id": item.findtext("guid") or "",
+        "_search_text": f"{title} {description}".strip(),
+        "_source_rank": source_rank,
+        "_source_url": source_url,
+    }
+
+
+def fetch_google_news_rss(
+    query: str,
+    category: str,
+    limit: int,
+    recent_days: int,
+    symbol: str = "MARKET",
+    official_hint: str = "",
+    required_text: str = "",
+) -> list[dict]:
+    params = urllib.parse.urlencode({"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
+    request = urllib.request.Request(
+        f"{GOOGLE_NEWS_RSS_URL}?{params}",
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            root = ET.fromstring(response.read())
+    except Exception:
+        return []
+    rows: list[dict] = []
+    for item in root.findall(".//item"):
+        row = google_news_row(item, category, symbol, official_hint)
+        if required_text and not contains_news_keyword(str(row.get("headline", "")), required_text):
+            continue
+        if not matches_news_category(row.get("_search_text", ""), category):
+            continue
+        if not is_recent_news(row, recent_days):
+            continue
+        rows.append(row)
+    return sorted(
+        rows,
+        key=lambda item: (to_float(item.get("_source_rank")), to_float(item.get("_published_ts"))),
+        reverse=True,
+    )[:limit]
+
+
 def extract_news_row(symbol: str, item: dict, category: str | None = None) -> dict:
     content = item.get("content") if isinstance(item, dict) else None
     if isinstance(content, dict):
@@ -907,6 +1052,7 @@ def extract_news_row(symbol: str, item: dict, category: str | None = None) -> di
         "_published_ts": news_timestamp(published),
         "_news_id": item.get("uuid", "") if isinstance(item, dict) else "",
         "_search_text": text,
+        "_source_rank": news_source_rank(source or ""),
     }
 
 
@@ -960,45 +1106,106 @@ def fetch_technology_company_news(symbol: str, limit: int, recent_days: int) -> 
     )
     if not exact_quote or not is_technology_quote(exact_quote):
         return []
+    company_name = str(exact_quote.get("longname") or exact_quote.get("shortname") or symbol)
+    search_name = concise_company_name(company_name)
     rows: list[dict] = []
     for item in search.news:
         related = [str(value).upper() for value in item.get("relatedTickers", [])] if isinstance(item, dict) else []
         if related and symbol.upper() not in related:
             continue
         row = extract_news_row(symbol, item, NEWS_TECH_COMPANY)
+        row["_source_rank"] = news_source_rank(str(row.get("source", "")), company_name)
         if matches_news_category(row.get("_search_text", ""), NEWS_TECH_COMPANY) and is_recent_news(row, recent_days):
             rows.append(row)
-        if len(rows) >= limit:
-            break
-    return rows
+    google_query = (
+        f'\"{search_name}\" '
+        f'(launches OR unveils OR introduces OR \"now available\" OR appoints OR buyback OR update OR new) '
+        f'when:{recent_days}d'
+    )
+    rows.extend(
+        fetch_google_news_rss(
+            google_query,
+            NEWS_TECH_COMPANY,
+            max(limit * 3, 15),
+            recent_days,
+            symbol=symbol,
+            official_hint=company_name,
+            required_text=search_name,
+        )
+    )
+    ranked = sorted(
+        deduplicate_news(rows),
+        key=lambda item: (to_float(item.get("_source_rank")), to_float(item.get("_published_ts"))),
+        reverse=True,
+    )
+    return ranked[:limit]
 
 
 def fetch_topic_news(category: str, query: str, limit: int, recent_days: int) -> list[dict]:
     search = yahoo_news_search(query, max(limit * 2, limit))
-    if search is None:
-        return []
     rows: list[dict] = []
-    for item in search.news:
-        related = item.get("relatedTickers", []) if isinstance(item, dict) else []
-        scope = ",".join(str(value).upper() for value in related[:3]) or "MARKET"
-        row = extract_news_row(scope, item, category)
-        if matches_news_category(row.get("_search_text", ""), category) and is_recent_news(row, recent_days):
-            rows.append(row)
-        if len(rows) >= limit:
-            break
-    return rows
+    required_entity = re.sub(r"\s+investor$", "", query, flags=re.IGNORECASE).strip()
+    if search is not None:
+        for item in search.news:
+            related = item.get("relatedTickers", []) if isinstance(item, dict) else []
+            scope = ",".join(str(value).upper() for value in related[:3]) or "MARKET"
+            row = extract_news_row(scope, item, category)
+            if category in {NEWS_MARKET_VIEWS, NEWS_BANK_RESEARCH} and not contains_news_keyword(
+                row.get("_search_text", ""),
+                required_entity,
+            ):
+                continue
+            if matches_news_category(row.get("_search_text", ""), category) and is_recent_news(row, recent_days):
+                rows.append(row)
+    google_query = ""
+    if category == NEWS_MARKET_VIEWS:
+        google_query = f'\"{query}\" (interview OR says OR warns OR outlook OR views OR letter) when:{recent_days}d'
+    elif category == NEWS_BANK_RESEARCH:
+        google_query = (
+            f'\"{query}\" (research OR outlook OR forecast OR favors OR recommends OR upgrades OR downgrades) '
+            f'when:{recent_days}d'
+        )
+    if google_query:
+        rows.extend(
+            fetch_google_news_rss(
+                google_query,
+                category,
+                max(limit * 3, 15),
+                recent_days,
+                official_hint=query,
+                required_text=required_entity,
+            )
+        )
+    ranked = sorted(
+        deduplicate_news(rows),
+        key=lambda item: (to_float(item.get("_source_rank")), to_float(item.get("_published_ts"))),
+        reverse=True,
+    )
+    return ranked[:limit]
 
 
 def deduplicate_news(rows: list[dict]) -> list[dict]:
-    unique: list[dict] = []
-    seen: set[str] = set()
-    for row in sorted(rows, key=lambda item: to_float(item.get("_published_ts")), reverse=True):
-        key = str(row.get("link") or row.get("_news_id") or row.get("headline", "")).strip().lower()
-        if not key or key in seen:
+    best_by_headline: dict[str, dict] = {}
+    for row in rows:
+        headline = str(row.get("headline", "")).lower()
+        key = re.sub(r"[^a-z0-9]+", " ", headline).strip()
+        if not key:
+            key = str(row.get("link") or row.get("_news_id") or "").strip().lower()
+        if not key:
             continue
-        seen.add(key)
-        unique.append(row)
-    return unique
+        current = best_by_headline.get(key)
+        candidate_score = (to_float(row.get("_source_rank")), to_float(row.get("_published_ts")))
+        current_score = (
+            to_float(current.get("_source_rank")),
+            to_float(current.get("_published_ts")),
+        ) if current else (-1.0, -1.0)
+        if current is None or candidate_score > current_score:
+            best_by_headline[key] = row
+    return sorted(
+        best_by_headline.values(),
+        key=lambda item: (to_float(item.get("_published_ts")), to_float(item.get("_source_rank"))),
+        reverse=True,
+    )
 
 
 def get_symbol_frame(raw, symbol: str, symbol_count: int):
@@ -1250,8 +1457,8 @@ class YFinancePrototypeScanner(tk.Tk):
         self.box_width_pct_var = tk.StringVar(value="15")
         self.min_breakout_turnover_var = tk.StringVar(value="30000000")
         self.breakout_turnover_multiple_var = tk.StringVar(value="1.5")
-        self.news_max_symbols_var = tk.StringVar(value="10")
-        self.news_items_per_symbol_var = tk.StringVar(value="5")
+        self.news_max_symbols_var = tk.StringVar(value="25")
+        self.news_items_per_symbol_var = tk.StringVar(value="10")
         self.news_recent_days_var = tk.StringVar(value="5")
         self.news_range_start, self.news_range_end = news_date_range(5)
         self.news_filter_key = NEWS_ALL
@@ -1961,10 +2168,9 @@ class YFinancePrototypeScanner(tk.Tk):
         self.stop_event.clear()
 
     def news_symbols(self, max_symbols: int) -> list[str]:
-        if self.results:
-            symbols = [str(row.get("symbol", "")).strip().upper() for row in self.results]
-        else:
-            symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
+        result_symbols = [str(row.get("symbol", "")).strip().upper() for row in self.results]
+        manual_symbols = parse_symbols(self.symbol_text.get("1.0", "end"))
+        symbols = [*result_symbols, *manual_symbols]
         symbols = [symbol for symbol in dict.fromkeys(symbols) if symbol]
         return symbols[:max_symbols]
 
@@ -2008,19 +2214,56 @@ class YFinancePrototypeScanner(tk.Tk):
         self.news_stop_event.set()
         self.news_status_var.set(self._t("news_status_stopping"))
 
-    def load_news_worker(self, symbols: list[str], items_per_search: int, recent_days: int) -> None:
+    def load_news_worker(
+        self,
+        symbols: list[str],
+        items_per_search: int,
+        recent_days: int,
+    ) -> None:
         rows: list[dict] = []
-        tasks: list[tuple[str, str, str]] = []
+        tasks: list[tuple[str, str, str, str]] = []
+        tasks.extend(
+            (
+                "google",
+                NEWS_TECH_COMPANY,
+                f"{query} when:{recent_days}d",
+                localized_news_category(self.lang, NEWS_TECH_COMPANY),
+            )
+            for query in GOOGLE_TECH_UPDATE_SEARCHES
+        )
+        for category in [NEWS_MARKET_VIEWS, NEWS_BANK_RESEARCH]:
+            queries = NEWS_TOPIC_SEARCHES.get(category, [])
+            tasks.extend(("topic", category, query, localized_news_category(self.lang, category)) for query in queries)
+            tasks.extend(
+                (
+                    "google",
+                    category,
+                    f"{query} when:{recent_days}d",
+                    localized_news_category(self.lang, category),
+                )
+                for query in GOOGLE_FOCUSED_TOPIC_SEARCHES.get(category, [])
+            )
+        tasks.extend(("symbol", NEWS_TECH_COMPANY, symbol, symbol) for symbol in symbols)
         for category, queries in NEWS_TOPIC_SEARCHES.items():
-            tasks.extend((category, query, localized_news_category(self.lang, category)) for query in queries)
-        tasks.extend((NEWS_TECH_COMPANY, symbol, symbol) for symbol in symbols)
+            if category in {NEWS_MARKET_VIEWS, NEWS_BANK_RESEARCH}:
+                continue
+            tasks.extend(("topic", category, query, localized_news_category(self.lang, category)) for query in queries)
         total = len(tasks)
-        for index, (category, query, label) in enumerate(tasks, start=1):
+        for index, (task_type, category, query, label) in enumerate(tasks, start=1):
             if self.news_stop_event.is_set():
                 break
             self.messages.put(("news_status", self._t("news_status_loading", symbol=label, checked=index, total=total)))
-            if category == NEWS_TECH_COMPANY:
+            if task_type == "symbol":
                 rows.extend(fetch_technology_company_news(query, items_per_search, recent_days))
+            elif task_type == "google":
+                rows.extend(
+                    fetch_google_news_rss(
+                        query,
+                        category,
+                        max(items_per_search * 5, 50),
+                        recent_days,
+                    )
+                )
             else:
                 rows.extend(fetch_topic_news(category, query, items_per_search, recent_days))
             rows = deduplicate_news(rows)

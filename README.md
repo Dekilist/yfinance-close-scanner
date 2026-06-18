@@ -79,12 +79,12 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 - Click `Run Scan`.
 - Click `Export CSV` after a scan to save the current results.
 - Open the `News` tab to load the ten requested company and market-wide news categories.
-- `Tech Symbols` limits how many scan-result symbols are checked for technology-company updates. If there are no scan results, the manually entered symbols are used.
+- `Tech Symbols` limits the combined scan-result and manually entered symbols used for extra company-specific searches. Broad technology searches run independently of this list.
 - `Items / Search` controls the maximum result count for each company or topic search.
 - `News Range (Days)` is a dropdown with `1`, `3`, `5`, `7`, `14`, `30`, `60`, and `90` days. The default is `5`.
 - The range counts calendar dates inclusively from today. For example, selecting `5` includes today and the previous four dates. The completed status shows the exact start and end dates.
 - Use the category menu to show all news or one of the ten categories. Export follows the visible category filter.
-- The visible `Main Idea / Summary` column uses Yahoo's article summary when available and falls back to the headline when Yahoo supplies no summary.
+- The visible `Main Idea / Summary` column uses a source-supplied summary when available and falls back to the headline when none is supplied.
 - In English mode, headlines and summaries remain in their original language. In Chinese mode, both are translated into Simplified Chinese in a background thread and cached for the session. Switching back to English restores both originals immediately.
 - Double-click a news row, or select it and click `Open Article`, to open the hidden source URL.
 - Click `Export News CSV` to save the loaded news rows.
@@ -105,7 +105,9 @@ The `News` tab implements these ten independent categories:
 9. `Federal Reserve`: Federal Reserve and FOMC decisions, meetings, policy, and rate news.
 10. `Investment Hot Topics`: themes currently receiving attention in investing and stock-market coverage.
 
-The app uses targeted Yahoo searches, keyword relevance checks, a recent-day cutoff, and duplicate removal. These categories are research helpers, not legal or financial conclusions. Yahoo/yfinance cannot guarantee complete coverage of SEC releases, exchange notices, conferences, paywalled bank research, executive comments, or breaking geopolitical events. Production-grade monitoring would need direct SEC, Federal Reserve, exchange, government, conference, and licensed news/research feeds.
+Coverage is expanded for `Tech Company Updates`, `Executive/Investor Views`, and `Investment Bank Research`. The loader combines broad Google News RSS searches with Yahoo and company-specific searches, requires the named company/person/bank in focused results, and ranks official company pages and established financial sources ahead of secondary coverage. Duplicate headlines are collapsed in favor of the more authoritative source. No symbol watchlist is prioritized.
+
+These categories are research helpers, not legal or financial conclusions. Public search feeds cannot guarantee complete coverage of company releases, paywalled bank research, executive comments, or breaking events. Production-grade monitoring would still need direct company, SEC, exchange, government, and licensed research/news feeds.
 
 ## Data Notes
 
@@ -115,7 +117,7 @@ Important limitations:
 
 - The latest daily bar may be delayed, adjusted, incomplete, or unavailable.
 - Yahoo/yfinance can throttle requests, especially when scanning the full U.S. universe.
-- Yahoo/yfinance news coverage varies and does not guarantee complete or real-time coverage of any of the ten news categories.
+- Yahoo and Google News RSS coverage varies and does not guarantee complete or real-time coverage of any news category.
 - Chinese headline and summary translation requires internet access and uses a public machine-translation endpoint. If that service is unavailable or rate-limited, the row displays a translation-unavailable notice with the original text.
 - Market cap can be missing for some symbols. The app has an `Allow missing market cap` option, but turning it on makes market-cap filters less strict.
 - Mover ratio is approximated as latest daily volume divided by the previous 20-day average volume. It is not Futu's real-time volume ratio.
