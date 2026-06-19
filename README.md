@@ -94,7 +94,7 @@ No FutuOpenD login, Futu quote permission, or Futu historical candlestick quota 
 
 The `News` tab implements these ten independent categories:
 
-1. `Tech Company Updates`: new technology, products, capacity increases, buybacks, insider purchases, and CEO/CFO/CTO/COO arrivals or departures. A symbol is included only when Yahoo identifies it as a technology company.
+1. `Tech Company Updates`: U.S.-listed technology companies releasing new technology, new products, executive insider purchases/increased holdings, or new business models. Capacity increases, company buybacks, partnerships, and management appointments/departures do not qualify by themselves.
 2. `Tech Events`: important technology conferences, exhibitions, forums, summits, and keynotes.
 3. `U.S./China Industry Policy`: new industrial policies, subsidies, funding plans, and export controls from the United States or China.
 4. `Geopolitics/Trade`: wars, sanctions, counter-sanctions, export bans, and tariff or trade-war escalation.
@@ -105,7 +105,9 @@ The `News` tab implements these ten independent categories:
 9. `Federal Reserve`: Federal Reserve and FOMC decisions, meetings, policy, and rate news.
 10. `Investment Hot Topics`: themes currently receiving attention in investing and stock-market coverage.
 
-Coverage is expanded for `Tech Company Updates`, `Executive/Investor Views`, and `Investment Bank Research`. The loader combines broad Google News RSS searches with Yahoo and company-specific searches, requires the named company/person/bank in focused results, and ranks official company pages and established financial sources ahead of secondary coverage. Duplicate headlines are collapsed in favor of the more authoritative source. No symbol watchlist is prioritized.
+Coverage is expanded for `Tech Company Updates`, `Executive/Investor Views`, and `Investment Bank Research`. The loader combines broad Google News RSS searches with Yahoo and company-specific searches. Broad technology results must match a company in Yahoo's U.S.-exchange Technology, Electronic Gaming & Multimedia, or Internet Content & Information universe. Official company pages and established financial sources rank ahead of secondary coverage.
+
+Cross-source duplicates are grouped by company, date, normalized event wording, and headline similarity. Only the preferred-source version of the same event is displayed, even when publishers use different titles.
 
 These categories are research helpers, not legal or financial conclusions. Public search feeds cannot guarantee complete coverage of company releases, paywalled bank research, executive comments, or breaking events. Production-grade monitoring would still need direct company, SEC, exchange, government, and licensed research/news feeds.
 

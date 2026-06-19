@@ -14,6 +14,7 @@ import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -114,8 +115,8 @@ GOOGLE_TECH_UPDATE_SEARCHES = [
     '(launches OR unveils OR introduces OR "now available" OR "globally available") (AI OR software OR platform OR technology)',
     'accounts globally available gaming',
     '(MOSFET OR semiconductor OR "silicon carbide" OR processor OR chip) (launches OR unveils OR introduces OR "new benchmark")',
-    '("share buyback" OR "stock repurchase" OR "insider purchase" OR "expands capacity" OR "new factory") technology',
-    '(CEO OR CFO OR CTO OR COO) (appointed OR resigns OR joins OR "steps down") (technology OR software OR semiconductor)',
+    '(CEO OR CFO OR CTO OR COO OR director OR executive) ("buys shares" OR "insider buying" OR "increases stake") technology',
+    '("new business model" OR "subscription model" OR "advertising model" OR "licensing model" OR "monetization model") technology',
 ]
 
 GOOGLE_FOCUSED_TOPIC_SEARCHES = {
@@ -216,20 +217,30 @@ NEWS_CATEGORY_KEYWORDS = {
 
 TECH_EVENT_KEYWORDS = [
     "new technology", "new product", "launch", "launches", "launched", "unveil", "unveils", "debut",
-    "capacity expansion", "expands capacity", "production capacity", "new factory", "new plant",
-    "buyback", "share repurchase", "stock repurchase", "insider purchase", "buys shares", "bought shares",
-    "introduces", "rolls out", "releases", "starts manufacturing", "expands manufacturing", "deploys",
-    "partners with", "to power", "powers", "globally available", "now available", "rollout", "rolls out",
-    "announces", "announcement", "company update", "sets new benchmark",
+    "introduces", "rolls out", "globally available", "now available", "rollout", "sets new benchmark",
 ]
+TECH_ANNOUNCE_KEYWORDS = ["announces", "announcement", "releases", "released"]
 TECH_NEWNESS_KEYWORDS = ["new", "next-gen", "next generation", "latest", "advanced"]
 TECH_PRODUCT_KEYWORDS = [
-    "technology", "product", "platform", "chip", "processor", "model", "software", "hardware", "service",
-    "system", "factory", "plant", "manufacturing", "production", "capacity", "infrastructure",
+    "ai", "product", "platform", "chip", "processor", "model", "software", "hardware", "service",
+    "system", "infrastructure",
     "mosfet", "semiconductor", "silicon carbide",
 ]
-EXECUTIVE_ROLE_KEYWORDS = ["ceo", "cfo", "cto", "coo", "chief executive", "chief financial", "chief technology", "chief operating"]
-EXECUTIVE_CHANGE_KEYWORDS = ["resigns", "resigned", "steps down", "leaves", "depart", "joins", "appointed", "names", "hires", "succeeds"]
+EXECUTIVE_ROLE_KEYWORDS = [
+    "ceo", "cfo", "cto", "coo", "chief executive", "chief financial", "chief technology", "chief operating",
+    "director", "chairman", "executive", "officer", "insider",
+]
+EXECUTIVE_BUY_KEYWORDS = [
+    "insider purchase", "insider buying", "buys shares", "bought shares", "purchases shares", "purchased shares",
+    "acquires shares", "acquired shares", "increases stake", "increased stake", "boosts stake", "adds to stake",
+]
+BUSINESS_MODEL_KEYWORDS = [
+    "new business model", "business model", "subscription model", "advertising model", "licensing model",
+    "monetization model", "revenue model", "usage-based pricing", "freemium", "marketplace model",
+    "commercial model", "new monetization", "monetization strategy",
+]
+US_PRIMARY_EQUITY_EXCHANGES = {"NMS", "NGM", "NCM", "NYQ", "ASE"}
+_US_TECH_COMPANY_ALIASES: list[tuple[str, str, str]] | None = None
 TECH_INDUSTRY_KEYWORDS = [
     "software", "semiconductor", "computer", "internet", "electronic", "technology", "cybersecurity",
     "information technology", "consumer electronics", "communication equipment", "electronic gaming",
@@ -426,6 +437,7 @@ UI_TEXT = {
         "status_ready": "Ready to scan.",
         "news_status_ready": "Ready to load news.",
         "news_status_loading": "Loading {symbol} ({checked}/{total})...",
+        "news_status_loading_tech_universe": "Loading verified U.S.-listed technology companies...",
         "news_status_done": "Done. {count} news items from {start_date} to {end_date}.",
         "news_status_stopping": "Stopping news load...",
         "news_status_translating": "Translating titles and summaries ({done}/{total})...",
@@ -511,6 +523,7 @@ UI_TEXT = {
         "status_ready": "准备扫描。",
         "news_status_ready": "准备加载新闻。",
         "news_status_loading": "正在加载 {symbol} ({checked}/{total})...",
+        "news_status_loading_tech_universe": "正在加载已验证的美国上市科技公司名单...",
         "news_status_done": "完成，{start_date} 至 {end_date} 共 {count} 条新闻。",
         "news_status_stopping": "正在停止新闻加载...",
         "news_status_translating": "正在翻译标题和摘要（{done}/{total}）...",
@@ -805,12 +818,19 @@ def contains_news_keyword(text: str, keyword: str) -> bool:
 
 def matches_news_category(text: str, category: str) -> bool:
     if category == NEWS_TECH_COMPANY:
-        has_company_event = any(contains_news_keyword(text, keyword) for keyword in TECH_EVENT_KEYWORDS)
+        has_product_launch = any(contains_news_keyword(text, keyword) for keyword in TECH_EVENT_KEYWORDS)
         has_newness = any(contains_news_keyword(text, keyword) for keyword in TECH_NEWNESS_KEYWORDS)
         has_tech_product = any(contains_news_keyword(text, keyword) for keyword in TECH_PRODUCT_KEYWORDS)
+        has_announcement = any(contains_news_keyword(text, keyword) for keyword in TECH_ANNOUNCE_KEYWORDS)
         has_role = any(contains_news_keyword(text, keyword) for keyword in EXECUTIVE_ROLE_KEYWORDS)
-        has_change = any(contains_news_keyword(text, keyword) for keyword in EXECUTIVE_CHANGE_KEYWORDS)
-        return has_company_event or (has_newness and has_tech_product) or (has_role and has_change)
+        has_buy = any(contains_news_keyword(text, keyword) for keyword in EXECUTIVE_BUY_KEYWORDS)
+        has_business_model = any(contains_news_keyword(text, keyword) for keyword in BUSINESS_MODEL_KEYWORDS)
+        return (
+            has_product_launch
+            or ((has_newness or has_announcement) and has_tech_product)
+            or (has_role and has_buy)
+            or has_business_model
+        )
     if category == NEWS_INDUSTRY_POLICY:
         has_actor = any(contains_news_keyword(text, keyword) for keyword in POLICY_ACTOR_KEYWORDS)
         has_action = any(contains_news_keyword(text, keyword) for keyword in POLICY_ACTION_KEYWORDS)
@@ -948,6 +968,92 @@ def concise_company_name(value: str) -> str:
     ).strip() or name
 
 
+def build_us_technology_aliases(quotes: list[dict]) -> list[tuple[str, str, str]]:
+    generic_first_words = {
+        "advanced", "american", "digital", "global", "international", "national", "the", "united",
+    }
+    candidates: dict[str, dict[str, str]] = {}
+    for quote in quotes:
+        symbol = str(quote.get("symbol", "")).upper().strip()
+        name = str(
+            quote.get("longName")
+            or quote.get("longname")
+            or quote.get("shortName")
+            or quote.get("shortname")
+            or ""
+        ).strip()
+        if not symbol or not name:
+            continue
+        base_name = concise_company_name(name)
+        aliases = {base_name}
+        first_word = re.split(r"\s+", base_name)[0].strip(".,")
+        if len(first_word) >= 4 and first_word.lower() not in generic_first_words:
+            aliases.add(first_word)
+        for alias in aliases:
+            key = alias.lower()
+            candidates.setdefault(key, {})[symbol] = name
+    aliases: list[tuple[str, str, str]] = []
+    for alias, owners in candidates.items():
+        if len(owners) != 1:
+            continue
+        symbol, name = next(iter(owners.items()))
+        aliases.append((alias, symbol, name))
+    aliases.sort(key=lambda item: len(item[0]), reverse=True)
+    return aliases
+
+
+def load_us_listed_technology_aliases(force_refresh: bool = False) -> list[tuple[str, str, str]]:
+    global _US_TECH_COMPANY_ALIASES
+    if _US_TECH_COMPANY_ALIASES is not None and not force_refresh:
+        return list(_US_TECH_COMPANY_ALIASES)
+    if yf is None or not hasattr(yf, "screen") or not hasattr(yf, "EquityQuery"):
+        return []
+    try:
+        query = yf.EquityQuery(
+            "and",
+            [
+                yf.EquityQuery("is-in", ["exchange", *sorted(US_PRIMARY_EQUITY_EXCHANGES)]),
+                yf.EquityQuery(
+                    "or",
+                    [
+                        yf.EquityQuery("eq", ["sector", "Technology"]),
+                        yf.EquityQuery(
+                            "is-in",
+                            ["industry", "Electronic Gaming & Multimedia", "Internet Content & Information"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        first_page = yf.screen(query, offset=0, size=250, sortField="ticker", sortAsc=True)
+        total = int(first_page.get("total", 0) or 0)
+        quotes = list(first_page.get("quotes", []))
+        for offset in range(250, total, 250):
+            page = yf.screen(query, offset=offset, size=250, sortField="ticker", sortAsc=True)
+            quotes.extend(page.get("quotes", []))
+    except Exception:
+        return []
+    _US_TECH_COMPANY_ALIASES = build_us_technology_aliases(quotes)
+    return list(_US_TECH_COMPANY_ALIASES)
+
+
+def match_us_listed_technology_company(
+    headline: str,
+    aliases: list[tuple[str, str, str]],
+) -> tuple[str, str] | None:
+    matches: list[tuple[int, int, str, str]] = []
+    for alias, symbol, name in aliases:
+        alias_match = re.search(rf"\b{re.escape(alias)}\b", headline, re.IGNORECASE)
+        symbol_match = re.search(rf"\({re.escape(symbol)}\)", headline, re.IGNORECASE)
+        positions = [match.start() for match in [alias_match, symbol_match] if match is not None]
+        if positions:
+            matches.append((min(positions), -len(alias), symbol, name))
+    if not matches:
+        return None
+    _, _, symbol, name = min(matches)
+    return symbol, name
+
+
 def google_news_timestamp(value: str) -> float:
     try:
         return parsedate_to_datetime(value).timestamp()
@@ -995,6 +1101,7 @@ def fetch_google_news_rss(
     symbol: str = "MARKET",
     official_hint: str = "",
     required_text: str = "",
+    company_aliases: list[tuple[str, str, str]] | None = None,
 ) -> list[dict]:
     params = urllib.parse.urlencode({"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"})
     request = urllib.request.Request(
@@ -1009,6 +1116,20 @@ def fetch_google_news_rss(
     rows: list[dict] = []
     for item in root.findall(".//item"):
         row = google_news_row(item, category, symbol, official_hint)
+        if company_aliases is not None:
+            matched_company = match_us_listed_technology_company(str(row.get("headline", "")), company_aliases)
+            if matched_company is None:
+                continue
+            matched_symbol, matched_name = matched_company
+            row["symbol"] = matched_symbol
+            row["_source_rank"] = max(
+                to_float(row.get("_source_rank")),
+                news_source_rank(
+                    str(row.get("source", "")),
+                    matched_name,
+                    str(row.get("_source_url", "")),
+                ),
+            )
         if required_text and not contains_news_keyword(str(row.get("headline", "")), required_text):
             continue
         if not matches_news_category(row.get("_search_text", ""), category):
@@ -1018,7 +1139,7 @@ def fetch_google_news_rss(
         rows.append(row)
     return sorted(
         rows,
-        key=lambda item: (to_float(item.get("_source_rank")), to_float(item.get("_published_ts"))),
+        key=lambda item: (to_float(item.get("_published_ts")), to_float(item.get("_source_rank"))),
         reverse=True,
     )[:limit]
 
@@ -1078,6 +1199,11 @@ def is_technology_quote(quote: dict) -> bool:
     return sector == "technology" or any(contains_news_keyword(industry, keyword) for keyword in TECH_INDUSTRY_KEYWORDS)
 
 
+def is_us_listed_technology_quote(quote: dict) -> bool:
+    exchange = str(quote.get("exchange", "")).upper()
+    return exchange in US_PRIMARY_EQUITY_EXCHANGES and is_technology_quote(quote)
+
+
 def yahoo_news_search(query: str, limit: int):
     if yf is None:
         return None
@@ -1104,7 +1230,7 @@ def fetch_technology_company_news(symbol: str, limit: int, recent_days: int) -> 
         (quote for quote in search.quotes if str(quote.get("symbol", "")).upper() == symbol.upper()),
         None,
     )
-    if not exact_quote or not is_technology_quote(exact_quote):
+    if not exact_quote or not is_us_listed_technology_quote(exact_quote):
         return []
     company_name = str(exact_quote.get("longname") or exact_quote.get("shortname") or symbol)
     search_name = concise_company_name(company_name)
@@ -1184,25 +1310,69 @@ def fetch_topic_news(category: str, query: str, limit: int, recent_days: int) ->
     return ranked[:limit]
 
 
+NEWS_DEDUPE_STOPWORDS = {
+    "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "its", "of", "on", "the", "to", "with",
+    "stock", "shares", "company", "corporation", "inc", "is", "needs", "new", "now", "so", "stricter", "welcome",
+}
+
+
+def normalized_news_event_text(headline: str) -> str:
+    text = headline.lower()
+    replacements = [
+        (r"\b(launches|launched|launch|rolls out|rolled out|introduces|introduced|unveils|unveiled|releases|released)\b", " launch "),
+        (r"\b(rollout|now available|now globally available|globally available|available worldwide)\b", " launch global "),
+        (r"\b(age-based|age-gated)\b", " age "),
+        (r"\b(kids|children|child|teens|minor users|younger users|under 16s?)\b", " youth "),
+        (r"\b(protect|protection|safety features|safety controls|parental controls|controls)\b", " safety "),
+        (r"\b(accounts|account tiers|tiers)\b", " account "),
+        (r"\b(globally|global|worldwide)\b", " global "),
+        (r"\b(buys shares|bought shares|purchases shares|increases stake|boosts stake)\b", " insiderbuy "),
+        (r"\b(business model|subscription model|advertising model|licensing model|monetization model)\b", " businessmodel "),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text)
+    tokens = [token for token in re.findall(r"[a-z0-9]+", text) if token not in NEWS_DEDUPE_STOPWORDS]
+    return " ".join(tokens)
+
+
+def same_news_event(first: dict, second: dict) -> bool:
+    if first.get("category") != second.get("category"):
+        return False
+    first_symbol = str(first.get("symbol", ""))
+    second_symbol = str(second.get("symbol", ""))
+    if first_symbol not in {"", "MARKET"} and second_symbol not in {"", "MARKET"} and first_symbol != second_symbol:
+        return False
+    first_time = to_float(first.get("_published_ts"))
+    second_time = to_float(second.get("_published_ts"))
+    if first_time and second_time and abs(first_time - second_time) > 96 * 3600:
+        return False
+    first_text = normalized_news_event_text(str(first.get("headline", "")))
+    second_text = normalized_news_event_text(str(second.get("headline", "")))
+    if not first_text or not second_text:
+        return False
+    if first_text == second_text:
+        return True
+    first_tokens = set(first_text.split())
+    second_tokens = set(second_text.split())
+    overlap = len(first_tokens & second_tokens) / max(1, len(first_tokens | second_tokens))
+    sequence = SequenceMatcher(None, first_text, second_text).ratio()
+    threshold = 0.35 if first_symbol == second_symbol and first_symbol not in {"", "MARKET"} else 0.5
+    return overlap >= threshold or sequence >= (0.62 if threshold == 0.35 else 0.72)
+
+
 def deduplicate_news(rows: list[dict]) -> list[dict]:
-    best_by_headline: dict[str, dict] = {}
-    for row in rows:
-        headline = str(row.get("headline", "")).lower()
-        key = re.sub(r"[^a-z0-9]+", " ", headline).strip()
-        if not key:
-            key = str(row.get("link") or row.get("_news_id") or "").strip().lower()
-        if not key:
+    preferred = sorted(
+        rows,
+        key=lambda item: (to_float(item.get("_source_rank")), to_float(item.get("_published_ts"))),
+        reverse=True,
+    )
+    unique: list[dict] = []
+    for row in preferred:
+        if any(same_news_event(row, existing) for existing in unique):
             continue
-        current = best_by_headline.get(key)
-        candidate_score = (to_float(row.get("_source_rank")), to_float(row.get("_published_ts")))
-        current_score = (
-            to_float(current.get("_source_rank")),
-            to_float(current.get("_published_ts")),
-        ) if current else (-1.0, -1.0)
-        if current is None or candidate_score > current_score:
-            best_by_headline[key] = row
+        unique.append(row)
     return sorted(
-        best_by_headline.values(),
+        unique,
         key=lambda item: (to_float(item.get("_published_ts")), to_float(item.get("_source_rank"))),
         reverse=True,
     )
@@ -2221,6 +2391,8 @@ class YFinancePrototypeScanner(tk.Tk):
         recent_days: int,
     ) -> None:
         rows: list[dict] = []
+        self.messages.put(("news_status", self._t("news_status_loading_tech_universe")))
+        technology_aliases = load_us_listed_technology_aliases()
         tasks: list[tuple[str, str, str, str]] = []
         tasks.extend(
             (
@@ -2260,8 +2432,9 @@ class YFinancePrototypeScanner(tk.Tk):
                     fetch_google_news_rss(
                         query,
                         category,
-                        max(items_per_search * 5, 50),
+                        max(items_per_search * 10, 100),
                         recent_days,
+                        company_aliases=technology_aliases if category == NEWS_TECH_COMPANY else None,
                     )
                 )
             else:
